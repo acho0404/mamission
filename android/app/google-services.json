@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "896613141389",
+    "project_id": "mamission-1b54a",
+    "storage_bucket": "mamission-1b54a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:896613141389:android:91c1665dba582f7667cbc4",
+        "android_client_info": {
+          "package_name": "com.mamission.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAnoaHTnsBnt2i3wSlDTmgW_mow3n1zHuQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

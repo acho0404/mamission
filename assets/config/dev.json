@@ -1,0 +1,11 @@
+{
+  "mapsApiKey": "AIzaSyCXltusJoTE4wN04ETzYqLUSFRzRcX7DhY",
+  "firebase": {
+    "apiKey": "AIzaSyAnoaHTnsBnt2i3wSlDTmgW_mow3n1zHuQ",
+    "appId": "1:896613141389:android:91c1665dba582f7667cbc4",
+    "androidAppId": "1:896613141389:android:91c1665dba582f7667cbc4",
+    "projectId": "mamission-1b54a",
+    "messagingSenderId": "896613141389",
+    "storageBucket": "mamission-1b54a.firebasestorage.app"
+  }
+}

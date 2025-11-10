@@ -1,0 +1,5 @@
+
+CI/CD notes:
+- Android: use fastlane for signing & Play upload.
+- Web: flutter build web --release, deploy to Firebase Hosting.
+- Protect keys with GitHub Actions secrets; use .env-like dart files per env.

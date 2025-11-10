@@ -1,0 +1,58 @@
+name: mamission
+description: "Application Flutter connectée à Firebase (auth, Firestore, storage, maps, messaging, stripe)."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  shared_preferences: ^2.2.3 # (ou la dernière version)
+
+  # --- Firebase core ---
+  firebase_core: ^3.15.2
+  firebase_auth: ^5.7.0
+  cloud_firestore: ^5.6.12
+  firebase_storage: ^12.4.10
+  firebase_messaging: ^15.2.10
+  flutter_animate: ^4.5.0 # <--- AJOUTEZ CETTE LIGNE
+  geocoding: ^2.1.0
+  google_place: ^0.4.7
+  intl: ^0.19.0
+  google_fonts: ^4.0.4
+
+
+  # --- Routing & UI ---
+  go_router: ^14.2.0
+  google_maps_flutter: ^2.13.1
+  flutter_stripe: ^11.5.0
+  cupertino_icons: ^1.0.8
+
+  # --- Géolocalisation ---
+  geolocator: ^11.1.0
+  location: ^7.0.1
+
+  # --- Google API & médias ---
+  image_picker: ^1.1.2      # upload photo profil
+
+  # --- Outils divers ---
+  http: ^0.13.6
+  freezed_annotation: ^2.4.4
+  flutter_local_notifications: ^18.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/mission_marker.png
+    - assets/images/
+
+
