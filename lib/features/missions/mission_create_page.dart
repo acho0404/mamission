@@ -9,7 +9,9 @@ import 'package:google_place/google_place.dart';
 import 'package:image_picker/image_picker.dart';
 
 class MissionCreatePage extends StatefulWidget {
-  const MissionCreatePage({super.key});
+  final String? editMissionId;
+  const MissionCreatePage({super.key, this.editMissionId});
+
 
   @override
   State<MissionCreatePage> createState() => _MissionCreatePageState();
@@ -21,6 +23,7 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
   final _descCtrl = TextEditingController();
   final _budgetCtrl = TextEditingController();
   final _locationCtrl = TextEditingController();
+  Map<String, dynamic>? _originalData;
 
   File? _photo;
   bool _loading = false;
@@ -42,9 +45,25 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
 
   @override
   void initState() {
+    print("🟣 [DEBUG] editMissionId reçu: ${widget.editMissionId}");
+    print("🟣 [DEBUG] MissionCreatePage reçue avec editMissionId=${widget.editMissionId}");
+
     super.initState();
-    googlePlace = GooglePlace("VOTRE_CLE_API_GOOGLE_MAPS");
+    print("🟣 [DEBUG] MissionCreatePage reçue avec editMissionId=${widget.editMissionId}");
+    googlePlace = GooglePlace("AIzaSyCXltusJoTE4wN04ETzYqLUSFRzRcX7DhY");
+
+    if (widget.editMissionId != null) {
+      print("🟣 Édition détectée : ${widget.editMissionId}");
+      _loadMissionForEdit(widget.editMissionId!);
+    } else {
+      print("🟢 Création d’une nouvelle mission");
+    }
   }
+
+
+
+
+
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
@@ -79,6 +98,72 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
       setState(() => _predictions = result.predictions!);
     }
   }
+  Future<void> _loadMissionForEdit(String id) async {
+    print("🚀 [DEBUG] _loadMissionForEdit lancé avec id=$id");
+    setState(() => _loading = true);
+
+    print("🚀 _loadMissionForEdit lancé avec id=$id");
+
+    try {
+      setState(() => _loading = true);
+      print("🔍 Chargement de la mission pour édition ($id)...");
+
+      final doc = await FirebaseFirestore.instance
+          .collection('missions')
+          .doc(id)
+          .get();
+      print("📄 [DEBUG] doc.exists = ${doc.exists}");
+
+      print("📄 Résultat Firestore : existe=${doc.exists}, id=$id");
+
+      if (!doc.exists) {
+        print("❌ Mission non trouvée pour ID: $id");
+        if (mounted) {
+          setState(() => _loading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Mission introuvable ou supprimée.")),
+          );
+        }
+        return;
+      }
+
+
+
+      final data = doc.data()!;
+      print("📄 Résultat Firestore : existe=${doc.exists}, id=$id");
+      print("✅ Mission trouvée : ${data['title']}");
+      print("🎯 Données injectées dans les contrôleurs");
+
+      print("✅ Mission trouvée : ${data['title']}");
+
+      if (!mounted) return;
+
+      setState(() {
+        _originalData = data;
+        _titleCtrl.text = data['title'] ?? '';
+        _descCtrl.text = data['description'] ?? '';
+        _budgetCtrl.text = data['budget']?.toString() ?? '';
+        _locationCtrl.text = data['location'] ?? '';
+        _mode = data['mode'] ?? 'Sur place';
+        _flexibility = data['flexibility'] ?? 'Flexible';
+        if (data['deadline'] != null) {
+          _missionDate = (data['deadline'] as Timestamp).toDate();
+        }
+        _loading = false; // ✅ Stoppe le spinner
+      });
+      print("✅ _loadMissionForEdit terminé normalement");
+      print("✅ [DEBUG] Fin de _loadMissionForEdit");
+
+    } catch (e) {
+      print("🔥 Erreur pendant le chargement Firestore : $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Erreur de chargement : $e")),
+        );
+        setState(() => _loading = false);
+      }
+    }
+  }
 
   Future<void> _saveMission() async {
     if (!_formKey.currentState!.validate()) return;
@@ -88,7 +173,7 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) throw Exception("Utilisateur non connecté");
 
-      String photoUrl = "";
+      String photoUrl = _originalData?['photoUrl'] ?? '';
       if (_photo != null) {
         final ref = FirebaseStorage.instance
             .ref()
@@ -111,7 +196,56 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
       await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
       final userData = userDoc.data() ?? {};
 
-      await FirebaseFirestore.instance.collection('missions').add({
+      final missions = FirebaseFirestore.instance.collection('missions');
+
+      // 🟢 Si édition
+      if (widget.editMissionId != null) {
+        final id = widget.editMissionId!;
+        final oldDoc = await missions.doc(id).get();
+        if (!oldDoc.exists) throw Exception("Mission introuvable");
+        final oldData = oldDoc.data() ?? {};
+
+        final newData = {
+          "title": _titleCtrl.text.trim(),
+          "description": _descCtrl.text.trim(),
+          "budget": double.tryParse(_budgetCtrl.text) ?? 0,
+          "photoUrl": photoUrl,
+          "location": _locationCtrl.text.trim(),
+          "mode": _mode,
+          "flexibility": _flexibility,
+          "deadline":
+          _missionDate != null ? Timestamp.fromDate(_missionDate!) : null,
+          "updatedAt": FieldValue.serverTimestamp(),
+        };
+
+        final major = _hasMajorChanges(oldData, newData);
+
+        if (major) {
+          // ❌ Supprime les offres existantes
+          final offers = missions.doc(id).collection('offers');
+          final snap = await offers.get();
+          for (var doc in snap.docs) {
+            await doc.reference.delete();
+          }
+          await missions.doc(id).update({...newData, "offersCount": 0});
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("⚠️ Offres supprimées : la mission a été significativement modifiée."),
+            backgroundColor: Colors.orange,
+          ));
+        } else {
+          await missions.doc(id).update(newData);
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("✅ Mission mise à jour avec succès."),
+            backgroundColor: Colors.green,
+          ));
+        }
+
+        Navigator.pop(context);
+        return;
+      }
+
+      // 🟣 Sinon création normale
+      await missions.add({
         "title": _titleCtrl.text.trim(),
         "description": _descCtrl.text.trim(),
         "budget": double.tryParse(_budgetCtrl.text) ?? 0,
@@ -135,22 +269,20 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
         "createdAt": FieldValue.serverTimestamp(),
       });
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Mission publiée avec succès ✅")),
-        );
-        Navigator.pop(context);
-      }
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("Mission publiée avec succès ✅"),
+        backgroundColor: Colors.green,
+      ));
+      Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Erreur: ${e.toString()}")),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Erreur: ${e.toString()}")),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
+
 
   InputDecoration _buildInputDecoration(String label, IconData icon,
       {Widget? suffixIcon}) {
@@ -239,13 +371,23 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
               }
             },
           ),
-          title: const Text(
-            "Créer une mission",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          title: Text(
+            widget.editMissionId != null ? "Modifier la mission" : "Créer une mission",
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
           ),
+
         ),
         body: _loading
-            ? const Center(child: CircularProgressIndicator(color: _accentColor))
+            ? const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: _accentColor),
+              SizedBox(height: 16),
+              Text("Chargement des données Firebase…"),
+            ],
+          ),
+        )
             : SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Form(
@@ -495,8 +637,9 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
                     onPressed: _saveMission,
                     icon: const Icon(Icons.check_circle_outline,
                         color: Colors.white),
-                    label: const Text(
-                      "Publier la mission",
+                    label: Text(
+                      widget.editMissionId != null ? "Enregistrer les modifications" : "Publier la mission",
+
                       style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
@@ -517,5 +660,28 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
         ),
       ),
     );
+  }
+  bool _hasMajorChanges(Map<String, dynamic> oldData, Map<String, dynamic> newData) {
+    final majorFields = ['title', 'budget', 'location', 'mode', 'deadline'];
+    for (final f in majorFields) {
+      if (oldData[f]?.toString().trim() != newData[f]?.toString().trim()) {
+        return true;
+      }
+    }
+    final oldDesc = (oldData['description'] ?? '').toString().toLowerCase();
+    final newDesc = (newData['description'] ?? '').toString().toLowerCase();
+    return _computeTextChangePercent(oldDesc, newDesc) > 0.35;
+  }
+
+  double _computeTextChangePercent(String a, String b) {
+    if (a.isEmpty && b.isNotEmpty) return 1;
+    if (a.isEmpty && b.isEmpty) return 0;
+    int diff = 0;
+    int len = a.length < b.length ? a.length : b.length;
+    for (int i = 0; i < len; i++) {
+      if (a[i] != b[i]) diff++;
+    }
+    diff += (b.length - a.length).abs();
+    return diff / a.length;
   }
 }

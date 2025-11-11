@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'mission_detail_page.dart';
+import 'old_mission_detail_page.dart';
 import 'package:mamission/shared/widgets/status_badge.dart';
 import 'package:mamission/shared/widgets/card_mission.dart';
 import 'package:mamission/shared/widgets/card_offer.dart';

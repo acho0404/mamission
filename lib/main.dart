@@ -7,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'firebase_options.dart';
 import 'app/app.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,12 +23,12 @@ Future<void> main() async {
   // --- Initialisation FCM ---
   await _initFCM();
 
-  // --- Lancement de l’application ---
-  runApp(const MyApp());
-  print('🚀 Application lancée !');
-
   // --- Gestion de la présence utilisateur ---
   _initUserPresence();
+
+  // --- Lancement de l’application ---
+  runApp(const ProviderScope(child: MyApp()));
+  print('🚀 Application lancée !');
 }
 
 /// 🔹 Initialisation de Firebase Cloud Messaging

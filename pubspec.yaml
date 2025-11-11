@@ -11,9 +11,11 @@ dependencies:
   flutter:
     sdk: flutter
 
+
   shared_preferences: ^2.2.3 # (ou la dernière version)
 
   # --- Firebase core ---
+  flutter_riverpod: ^2.5.0
   firebase_core: ^3.15.2
   firebase_auth: ^5.7.0
   cloud_firestore: ^5.6.12

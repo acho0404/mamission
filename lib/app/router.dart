@@ -6,7 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../features/shell/shell.dart';
 import '../features/explore/explore_page.dart';
 import '../features/missions/mission_list_page.dart';
-import '../features/missions/mission_detail_page.dart';
+import 'package:mamission/features/missions/mission_detail/mission_detail_page.dart';
 import '../features/missions/mission_create_page.dart';
 import '../features/missions/offers_page.dart';        // ✅ liste des offres reçues
 import '../features/missions/offer_detail_page.dart';  // ✅ détail d’une offre
@@ -44,7 +44,9 @@ class _PlaceholderPage extends StatelessWidget {
   }
 }
 
-// --- ROUTER PRINCIPAL ---
+// =============================================================
+// 🔹 ROUTER PRINCIPAL
+// =============================================================
 GoRouter buildRouter() {
   return GoRouter(
     initialLocation: '/explore',
@@ -57,36 +59,52 @@ GoRouter buildRouter() {
       return null;
     },
     routes: [
-      // --- Authentification ---
+
+      // =========================================================
+      // 🔹 AUTH
+      // =========================================================
       GoRoute(path: '/login', builder: (context, state) => const LoginPage()),
       GoRoute(path: '/register', builder: (context, state) => const RegisterPage()),
       GoRoute(path: '/reset', builder: (context, state) => const ResetPasswordPage()),
 
-      // --- Shell principal (BottomNav) ---
+      // =========================================================
+      // 🔹 PAGE DE CRÉATION / ÉDITION DE MISSION
+      // (⚠️ hors Shell pour éviter blocage du push depuis MissionDetail)
+      // =========================================================
+      GoRoute(
+        path: '/missions/create',
+        builder: (context, state) {
+          final editId = state.uri.queryParameters['edit'];
+          print("🟣 [Router] MissionCreatePage appelée avec editId=$editId");
+          return MissionCreatePage(editMissionId: editId);
+        },
+      ),
+
+      // =========================================================
+      // 🔹 SHELL PRINCIPAL (bottom navigation)
+      // =========================================================
       ShellRoute(
         builder: (context, state, child) => ShellScaffold(child: child),
         routes: [
+
           // --- Explore ---
-          GoRoute(path: '/explore', builder: (context, state) => const ExplorePage()),
+          GoRoute(
+            path: '/explore',
+            builder: (context, state) => const ExplorePage(),
+          ),
 
           // --- Liste des missions ---
-          GoRoute(path: '/missions', builder: (context, state) => const MissionListPage()),
-
-          // --- Création d'une mission ---
           GoRoute(
-            path: '/missions/create',
-            pageBuilder: (context, state) => const MaterialPage(
-              fullscreenDialog: true,
-              child: MissionCreatePage(),
-            ),
+            path: '/missions',
+            builder: (context, state) => const MissionListPage(),
           ),
 
           // --- Détail d’une mission ---
           GoRoute(
             path: '/missions/:id',
             builder: (context, state) {
-              final id = state.pathParameters['id']!;
-              return MissionDetailPage(missionId: id);
+              final missionId = state.pathParameters['id']!;
+              return MissionDetailPage(missionId: missionId);
             },
           ),
 
@@ -99,19 +117,6 @@ GoRouter buildRouter() {
               return OffersPage(missionId: id, posterId: posterId);
             },
           ),
-
-          GoRoute(
-            path: '/offers/:missionId/:offerId',
-            builder: (context, state) {
-              final missionId = state.pathParameters['missionId']!;
-              final offerId = state.pathParameters['offerId']!;
-              return OfferDetailPage(
-                missionId: missionId,
-                offerId: offerId,
-              );
-            },
-          ),
-
 
           // --- Détail d’une seule offre ---
           GoRoute(
@@ -134,10 +139,12 @@ GoRouter buildRouter() {
           ),
 
           // --- Profil utilisateur ---
-          GoRoute(path: '/profile', builder: (context, state) => const ProfilePage()),
+          GoRoute(
+            path: '/profile',
+            builder: (context, state) => const ProfilePage(),
+          ),
 
-          // --- Autres pages (non encore implémentées) ---
-          GoRoute(path: '/payments', builder: (context, state) => const _PlaceholderPage('Paiement')),
+          // --- Avis utilisateur ---
           GoRoute(
             path: '/reviews/:userId',
             builder: (context, state) {
@@ -146,6 +153,11 @@ GoRouter buildRouter() {
             },
           ),
 
+          // --- Placeholder Paiement ---
+          GoRoute(
+            path: '/payments',
+            builder: (context, state) => const _PlaceholderPage('Paiement'),
+          ),
         ],
       ),
     ],
