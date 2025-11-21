@@ -9,40 +9,98 @@ import 'app/app.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+// ---------------------------------------------------------------------------
+// 🔥 PATCH 1 : Handler Background placé tout en haut (obligatoire)
+// ---------------------------------------------------------------------------
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  print("🔔 Background message: ${message.messageId}");
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('fr_FR', null);
 
-  // --- Initialisation Firebase ---
   print('🔹 Initialisation Firebase...');
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
   print('✅ Firebase initialisée.');
 
-  // --- Initialisation FCM ---
+  // ---------------------------------------------------------------------------
+  // 🔥 PATCH 2 : enregistrer le handler background AVANT _initFCM()
+  // ---------------------------------------------------------------------------
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+  // ---------------------------------------------------------------------------
+  // 🔥 PATCH 3 : init FCM (foreground + local notifications)
+  // ---------------------------------------------------------------------------
   await _initFCM();
+
+  // ---------------------------------------------------------------------------
+  // 🔥 PATCH 4 : enregistre fcmToken dès qu'un user se connecte = FIX critique
+  // ---------------------------------------------------------------------------
+  FirebaseAuth.instance.authStateChanges().listen((user) async {
+    if (user == null) return;
+    final token = await FirebaseMessaging.instance.getToken();
+    if (token != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+        'fcmToken': token,
+      });
+      print("🟣 Token FCM enregistré pour ${user.uid}");
+    }
+  });
 
   // --- Gestion de la présence utilisateur ---
   _initUserPresence();
 
-  // --- Lancement de l’application ---
   runApp(const ProviderScope(child: MyApp()));
   print('🚀 Application lancée !');
 }
 
-/// 🔹 Initialisation de Firebase Cloud Messaging
+// ---------------------------------------------------------------------------
+// 🔥 FCM INITIALISATION
+// ---------------------------------------------------------------------------
 Future<void> _initFCM() async {
   final fcm = FirebaseMessaging.instance;
 
-  // Demande de permission (iOS + Android 13+)
+  // Local Notifications
+  final localNotifications = FlutterLocalNotificationsPlugin();
+
+  const AndroidNotificationChannel channel = AndroidNotificationChannel(
+    'high_importance_channel',
+    'Notifications Importantes',
+    description: 'Ce canal est utilisé pour les notifications importantes.',
+    importance: Importance.high,
+  );
+
+  await localNotifications
+      .resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+
+  await localNotifications.initialize(
+    const InitializationSettings(
+      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      iOS: DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      ),
+    ),
+  );
+  await localNotifications
+      .resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>()
+      ?.requestNotificationsPermission(); // <--- Le nouveau nom
+  // Permissions
   await fcm.requestPermission();
 
-  // Récupère le token unique de l’appareil
+  // Token actuel
   final token = await fcm.getToken();
   print('🔑 FCM Token: $token');
 
-  // Sauvegarde du token dans Firestore (user connecté)
   final user = FirebaseAuth.instance.currentUser;
   if (user != null && token != null) {
     await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
@@ -50,18 +108,60 @@ Future<void> _initFCM() async {
     });
   }
 
-  // Écoute des messages reçus en foreground
-  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-    print('💬 Notification reçue: ${message.notification?.title}');
+  // Token refresh
+  fcm.onTokenRefresh.listen((newToken) async {
+    print('🔄 Nouveau Token FCM: $newToken');
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).update({
+        'fcmToken': newToken,
+      });
+    }
   });
 
-  // (Optionnel) Écoute quand l’utilisateur clique sur une notif
+  // Foreground
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    print('💬 Notification reçue en foreground: ${message.notification?.title}');
+
+    final notification = message.notification;
+    final android = message.notification?.android;
+
+    if (notification != null) {
+      localNotifications.show(
+        notification.hashCode,
+        notification.title,
+        notification.body,
+        NotificationDetails(
+          android: android != null
+              ? AndroidNotificationDetails(
+            channel.id,
+            channel.name,
+            channelDescription: channel.description,
+            icon: '@mipmap/ic_launcher',
+            importance: Importance.high,
+            priority: Priority.high,
+          )
+              : null,
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        ),
+      );
+    }
+  });
+
+  // Ouvrir l’app depuis une notif
   FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
     print('📲 Notification ouverte: ${message.notification?.title}');
+    // tu pourras ajouter navigation ici
   });
 }
 
-/// 🔹 Gère la présence (en ligne / hors ligne)
+// ---------------------------------------------------------------------------
+// 🔥 PRESENCE UTILISATEUR (inchangé)
+// ---------------------------------------------------------------------------
 void _initUserPresence() {
   final auth = FirebaseAuth.instance;
   FirebaseFirestore db = FirebaseFirestore.instance;
@@ -71,18 +171,15 @@ void _initUserPresence() {
 
     final userRef = db.collection('users').doc(user.uid);
 
-    // Marquer en ligne
     await userRef.update({
       'isOnline': true,
       'lastSeen': FieldValue.serverTimestamp(),
     });
 
-    // Écoute du cycle de vie de l’app
     WidgetsBinding.instance.addObserver(_PresenceObserver(userRef));
   });
 }
 
-/// 🔹 Classe qui écoute les états du cycle de vie Flutter
 class _PresenceObserver with WidgetsBindingObserver {
   final DocumentReference userRef;
 

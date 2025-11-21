@@ -1,64 +1,131 @@
-import * as functions from "firebase-functions/v2";
-import { onRequest, onCall } from "firebase-functions/v2/https";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import Stripe from "stripe";
 
 admin.initializeApp();
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-  apiVersion: "2024-06-20" as any,
-});
+// ----------------------------------------------------------
+// 🔥 AUTO CLOSE MISSION + NOTIFS Firestore
+// ----------------------------------------------------------
+export const autoCloseMission = onDocumentCreated(
+  "reviews/{id}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
 
-// createPaymentIntent callable
-export const createPaymentIntent = onCall(
-  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
-  async (request) => {
-    const amount = Number(request.data.amount);
-    const currency = (request.data.currency || "eur").toString();
-    const description = (request.data.description || "Mission payment").toString();
+    const data = snap.data();
+    const missionId = data.missionId;
+    const reviewerId = data.reviewerId;
 
-    if (!amount || amount <= 0) {
-      throw new functions.https.HttpsError("invalid-argument", "Montant invalide");
-    }
+    if (!missionId) return;
 
-    const intent = await stripe.paymentIntents.create({
-      amount,
-      currency,
-      description,
-      automatic_payment_methods: { enabled: true },
-    });
+    console.log("📝 Avis ajouté pour la mission :", missionId);
 
-    return { clientSecret: intent.client_secret };
-  }
-);
+    // Lire tous les avis
+    const reviewsSnap = await admin
+      .firestore()
+      .collection("reviews")
+      .where("missionId", "==", missionId)
+      .get();
 
-// stripeWebhook
-export const stripeWebhook = onRequest(
-  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
-  async (req, res) => {
-    const sig = req.headers["stripe-signature"] as string;
-    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET as string;
-    let event: Stripe.Event;
+    const totalReviews = reviewsSnap.size;
 
-    try {
-      event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
-    } catch (err: any) {
-      console.error("⚠️ Signature Stripe invalide :", err.message);
-      res.status(400).send(`Webhook Error: ${err.message}`);
+    // Anti doublon
+    const already = reviewsSnap.docs.filter(
+      (d) => d.data().reviewerId === reviewerId
+    );
+
+    if (already.length > 1) {
+      console.log("⚠️ Avis dupliqué → ignoré");
       return;
     }
 
-    switch (event.type) {
-      case "payment_intent.succeeded":
-        console.log("✅ Paiement réussi :", event.data.object["id"]);
-        break;
-      case "payment_intent.payment_failed":
-        console.log("❌ Paiement échoué :", event.data.object["id"]);
-        break;
-      default:
-        console.log("ℹ️ Événement Stripe :", event.type);
+    // Pas encore 2 avis
+    if (totalReviews < 2) {
+      console.log("⏳ Pas encore 2 avis →", totalReviews);
+      return;
     }
 
-    res.json({ received: true });
+    // Mission close
+    const missionRef = admin.firestore().collection("missions").doc(missionId);
+    const missionDoc = await missionRef.get();
+    const mission = missionDoc.data();
+
+    if (!mission) return;
+
+    const clientId = mission.posterId;
+    const providerId = mission.assignedTo;
+
+    await missionRef.update({
+      status: "closed",
+      closedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    console.log("✅ Mission automatiquement close :", missionId);
+
+    // Créer 2 notifs Firestore
+    const notifCol = admin.firestore().collection("notifications");
+
+    const base = {
+      type: "reviews_completed",
+      title: "Avis complétés 🎉",
+      body: "Vous et l'autre utilisateur avez laissé vos avis.",
+      extra: {
+        missionId,
+        missionTitle: mission.title || "",
+      },
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      read: false,
+    };
+
+    await notifCol.add({ ...base, userId: clientId });
+    await notifCol.add({ ...base, userId: providerId });
+
+    console.log("📨 Notifs Firestore créées.");
   }
 );
+
+// ----------------------------------------------------------
+// 🔥 ENVOI PUSH FCM AUTOMATIQUE depuis /notifications
+// ----------------------------------------------------------
+export const sendPushOnNotificationCreate = functions.firestore
+  .document("notifications/{id}")
+  .onCreate(async (snap, context) => {
+    const notif = snap.data();
+    if (!notif) return;
+
+    const { userId, title, body, type, extra } = notif;
+
+    // Get token FCM
+    const userDoc = await admin.firestore()
+      .collection("users")
+      .doc(userId)
+      .get();
+
+    const token = userDoc.get("fcmToken");
+
+    if (!token) {
+      console.log("⚠️ Pas de token FCM pour", userId);
+      return;
+    }
+
+    const message: admin.messaging.Message = {
+      token,
+      notification: {
+        title: title || "Notification",
+        body: body || "",
+      },
+      data: {
+        type: type || "",
+        missionId: extra?.missionId || "",
+        missionTitle: extra?.missionTitle || "",
+      },
+    };
+
+    try {
+      await admin.messaging().send(message);
+      console.log("📨 Push envoyé à:", userId);
+    } catch (e) {
+      console.error("❌ Erreur push:", e);
+    }
+  });

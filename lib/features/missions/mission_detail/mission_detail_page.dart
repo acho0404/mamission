@@ -5,13 +5,17 @@ import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:mamission/shared/apple_appbar.dart';
 
-// ✅ Imports de votre propre code (avec le nouveau chemin)
+// ✅ Imports de ton app
 import 'package:mamission/shared/widgets/status_badge.dart';
 import 'package:mamission/core/constants.dart';
 import 'package:mamission/core/formatters.dart';
 import 'package:mamission/features/missions/mission_detail/widgets/mission_questions_section.dart';
 import 'package:mamission/features/missions/mission_detail/widgets/photo_grid_section.dart';
+
+// ✅ Import du nouveau service robuste
+import 'package:mamission/shared/services/notification_service.dart';
 // =========================================================================
 // CLASSE PRINCIPALE (MissionDetailPage)
 // =========================================================================
@@ -25,7 +29,7 @@ class MissionDetailPage extends StatefulWidget {
 }
 
 class _MissionDetailPageState extends State<MissionDetailPage> {
-  // --- État (inchangé) ---
+  // --- État ---
   Stream<QuerySnapshot>? _questionsStream;
   final ScrollController _scrollController = ScrollController();
   final _questionCtrl = TextEditingController();
@@ -36,7 +40,10 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
 
   LatLng? _position;
   bool isOwner = false;
+
   bool _hasMadeOffer = false;
+  String? _myOfferId;
+  Map<String, dynamic>? _myOfferData;
 
   @override
   void initState() {
@@ -52,8 +59,46 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   }
 
   // =========================================================================
-  // LOGIQUE (load, offer, question, actions) - (inchangée)
+  // LOGIQUE (load, offer, question, actions)
   // =========================================================================
+  Future<bool> _hasUserAlreadyReviewed() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return false;
+
+    final query = await FirebaseFirestore.instance
+        .collection('reviews')
+        .where('missionId', isEqualTo: widget.missionId)
+        .where('reviewerId', isEqualTo: currentUser.uid)
+        .limit(1)
+        .get();
+
+    return query.docs.isNotEmpty;
+  }
+
+  Widget _offerCountChip(int count) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F4F6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.people, size: 14, color: Color(0xFF8E8E93)),
+          const SizedBox(width: 6),
+          Text(
+            "$count offre${count > 1 ? 's' : ''}",
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: Color(0xFF8E8E93),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _loadMission() async {
     final doc = await FirebaseFirestore.instance
@@ -79,8 +124,10 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
 
     final posterId = m['posterId'];
     if (posterId is String && posterId.isNotEmpty) {
-      final userDoc =
-      await FirebaseFirestore.instance.collection('users').doc(posterId).get();
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(posterId)
+          .get();
       if (userDoc.exists && mounted) setState(() => poster = userDoc.data());
     }
 
@@ -97,19 +144,33 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
       }
     }
 
-    if (!isOwner && user != null) {
+    // --- Récupère l'offre du worker connecté (pour modifier / retirer) ---
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (!isOwner && currentUser != null) {
       final existing = await FirebaseFirestore.instance
           .collection('missions')
           .doc(widget.missionId)
           .collection('offers')
-          .where('userId', isEqualTo: user.uid)
+          .where('userId', isEqualTo: currentUser.uid)
           .limit(1)
           .get();
+
       if (mounted) {
-        setState(() => _hasMadeOffer = existing.docs.isNotEmpty);
+        if (existing.docs.isNotEmpty) {
+          final docOffer = existing.docs.first;
+          setState(() {
+            _hasMadeOffer = true;
+            _myOfferId = docOffer.id;
+            _myOfferData = docOffer.data() as Map<String, dynamic>;
+          });
+        } else {
+          setState(() {
+            _hasMadeOffer = false;
+            _myOfferId = null;
+            _myOfferData = null;
+          });
+        }
       }
-    } else if (isOwner) {
-      setState(() => _hasMadeOffer = true);
     }
     _questionsStream = FirebaseFirestore.instance
         .collection('missions')
@@ -119,9 +180,190 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         .snapshots();
   }
 
+  // --------------------------------------------------------------------------
+  // OFFRE : créer
+  // --------------------------------------------------------------------------
   Future<void> _onOfferPressed() async {
     final priceCtrl = TextEditingController();
     final msgCtrl = TextEditingController();
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Faire une offre',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+
+                const SizedBox(height: 12),
+
+                TextField(
+                  controller: priceCtrl,
+                  decoration: const InputDecoration(
+                    hintText: "Votre prix (€)",
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.euro_symbol),
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+
+                const SizedBox(height: 12),
+
+                TextField(
+                  controller: msgCtrl,
+                  decoration: const InputDecoration(
+                    hintText: "Ajouter un message (optionnel)",
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 3,
+                ),
+
+                const SizedBox(height: 12),
+
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.add_circle_outline),
+                  label: const Text("Envoyer l'offre"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kPrimary,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(45),
+                  ),
+                  onPressed: () async {
+                    final user = FirebaseAuth.instance.currentUser;
+                    if (user == null) return;
+
+                    final userDoc = await FirebaseFirestore.instance
+                        .collection('users')
+                        .doc(user.uid)
+                        .get();
+
+                    final userData = userDoc.data() ?? {};
+                    final priceText = priceCtrl.text.trim();
+                    final message = msgCtrl.text.trim();
+
+                    if (priceText.isEmpty) return;
+
+                    final price = double.tryParse(priceText) ?? 0;
+
+                    final offersRef = FirebaseFirestore.instance
+                        .collection('missions')
+                        .doc(widget.missionId)
+                        .collection('offers');
+
+                    // 🔥 Vérifier si une offre existe déjà
+                    final existing = await offersRef
+                        .where('userId', isEqualTo: user.uid)
+                        .limit(1)
+                        .get();
+
+                    // 🔥 Si offre existe → on la met à jour
+                    if (existing.docs.isNotEmpty) {
+                      final doc = existing.docs.first;
+
+                      await doc.reference.update({
+                        'price': price,
+                        'message': message,
+                        'status': 'pending',
+                        'updatedAt': FieldValue.serverTimestamp(),
+                        'cancelledAt': FieldValue.delete(),
+                      });
+
+                      // ✅ NOTIF ROBUSTE : Mise à jour offre
+                      await NotificationService.notifyOfferEdited(
+                        clientUserId: mission?['posterId'] ?? '',
+                        missionId: widget.missionId,
+                        providerName: userData['name'] ?? 'Un prestataire',
+                        newPrice: price,
+                      );
+
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        await _loadMission();
+                      }
+                      return;
+                    }
+
+                    // 🔥 Sinon → nouvelle offre
+                    final newOffer = offersRef.doc();
+
+                    await newOffer.set({
+
+                      'id': newOffer.id,
+                      'userId': user.uid,
+                      'userName': userData['name'] ?? 'Utilisateur',
+                      'userPhoto': userData['photoUrl'] ?? '',
+                      'price': price,
+                      'message': message,
+                      'createdAt': FieldValue.serverTimestamp(),
+                      'status': 'pending',
+                    });
+                    await FirebaseFirestore.instance
+                        .collection('missions')
+                        .doc(widget.missionId)
+                        .update({
+                      'offersCount': FieldValue.increment(1),
+                    });
+
+
+                    // ✅ NOTIF ROBUSTE : Nouvelle offre
+                    await NotificationService.notifyNewOffer(
+                      clientUserId: mission?['posterId'] ?? '',
+                      missionId: widget.missionId,
+                      missionTitle: mission?['title'] ?? 'Mission',
+                      providerName: userData['name'] ?? 'Un prestataire',
+                      price: price,
+                    );
+
+                    if (context.mounted) {
+                      Navigator.pop(context);
+                      await _loadMission();
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _formatDurationHours(Map<String, dynamic>? mission) {
+    if (mission == null) return "Flexible";
+
+    final raw = mission['duration'];
+    if (raw == null) return "Flexible";
+
+    final hours = (raw is num) ? raw.toDouble() : double.tryParse(raw.toString());
+    if (hours == null || hours <= 0) return "Flexible";
+
+    return "${hours.toString().replaceAll('.0', '')} h";
+  }
+
+  // --------------------------------------------------------------------------
+  // OFFRE : modifier (tant que mission = open)
+  // --------------------------------------------------------------------------
+  Future<void> _onEditOfferPressed() async {
+    if (_myOfferId == null || _myOfferData == null) return;
+
+    final priceCtrl = TextEditingController(
+      text: (_myOfferData?['price']?.toString() ?? ''),
+    );
+    final msgCtrl = TextEditingController(
+      text: (_myOfferData?['message']?.toString() ?? ''),
+    );
 
     await showModalBottomSheet(
       context: context,
@@ -142,7 +384,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'Faire une offre',
+                  'Modifier mon offre',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                 ),
                 const SizedBox(height: 12),
@@ -159,15 +401,15 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                 TextField(
                   controller: msgCtrl,
                   decoration: const InputDecoration(
-                    hintText: "Ajouter un message (optionnel)",
+                    hintText: "Modifier le message (optionnel)",
                     border: OutlineInputBorder(),
                   ),
                   maxLines: 3,
                 ),
                 const SizedBox(height: 12),
                 ElevatedButton.icon(
-                  icon: const Icon(Icons.add_circle_outline),
-                  label: const Text("Envoyer l'offre"),
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text("Enregistrer les modifications"),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: kPrimary,
                     foregroundColor: Colors.white,
@@ -181,6 +423,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                         .doc(user.uid)
                         .get();
                     final userData = userDoc.data() ?? {};
+
                     final priceText = priceCtrl.text.trim();
                     final message = msgCtrl.text.trim();
                     if (priceText.isEmpty) return;
@@ -191,33 +434,29 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                         .collection('missions')
                         .doc(widget.missionId)
                         .collection('offers')
-                        .doc();
+                        .doc(_myOfferId);
 
-                    await offerRef.set({
-                      'id': offerRef.id,
-                      'userId': user.uid,
-                      'userName': userData['name'] ?? 'Utilisateur',
-                      'userPhoto': userData['photoUrl'] ?? '',
+                    await offerRef.update({
                       'price': price,
                       'message': message,
-                      'createdAt': FieldValue.serverTimestamp(),
-                      'status': 'pending',
+                      'updatedAt': FieldValue.serverTimestamp(),
                     });
 
-                    await FirebaseFirestore.instance
-                        .collection('missions')
-                        .doc(widget.missionId)
-                        .update({
-                      'offersCount': FieldValue.increment(1),
-                    });
+                    // ✅ NOTIF ROBUSTE : Modification
+                    await NotificationService.notifyOfferEdited(
+                      clientUserId: mission?['posterId'] ?? '',
+                      missionId: widget.missionId,
+                      providerName: userData['name'] ?? 'Un prestataire',
+                      newPrice: price,
+                    );
 
                     if (context.mounted) {
                       Navigator.pop(context);
                       await _loadMission();
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text("✅ Offre envoyée avec succès !"),
-                          backgroundColor: Color(0xFF6C63FF),
+                          content: Text("✅ Offre mise à jour."),
+                          backgroundColor: kPrimary,
                         ),
                       );
                     }
@@ -231,6 +470,159 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     );
   }
 
+  // --------------------------------------------------------------------------
+  // OFFRE : retirer (tant que mission = open)
+  // --------------------------------------------------------------------------
+  Future<void> _onWithdrawOfferPressed() async {
+    if (_myOfferId == null) return;
+
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 50,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                "Retirer votre offre ?",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: kPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                "Vous ne serez plus visible parmi les offres reçues.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: kGreyText, height: 1.5),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: kPrimary, width: 1.4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text(
+                        "Non, garder",
+                        style: TextStyle(
+                          color: kPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text(
+                        "Oui, retirer",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final missionRef = FirebaseFirestore.instance
+          .collection('missions')
+          .doc(widget.missionId);
+
+      // supprime l'offre
+      await missionRef.collection('offers').doc(_myOfferId).update({
+        'status': 'cancelled',
+        'cancelledAt': FieldValue.serverTimestamp(),
+      });
+
+      await missionRef.update({
+        'offersCount': FieldValue.increment(-1), // on retire du compteur actif
+      });
+
+      // ✅ NOTIF ROBUSTE : Retrait offre
+      final userData = (await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get())
+          .data();
+
+      await NotificationService.notifyOfferWithdrawn(
+        clientUserId: mission?['posterId'] ?? '',
+        missionId: widget.missionId,
+        providerName: userData?['name'] ?? 'Le prestataire',
+      );
+
+      if (mounted) {
+        setState(() {
+          _hasMadeOffer = false;
+          _myOfferId = null;
+          _myOfferData = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("🚫 Offre retirée."),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Erreur: impossible de retirer l'offre."),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // QUESTIONS PUBLIQUES
+  // --------------------------------------------------------------------------
   Future<void> _sendQuestion() async {
     final txt = _questionCtrl.text.trim();
     if (txt.isEmpty) return;
@@ -335,100 +727,166 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     );
   }
 
+  // --------------------------------------------------------------------------
+  // CHAT
+  // --------------------------------------------------------------------------
   Future<void> _handleOpenChat() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || mission == null) return;
 
-    // 🔹 Récupère les infos Firestore du user connecté
-    final userDoc =
-    await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-    final myData = userDoc.data() ?? {};
+    final String missionId = widget.missionId;
+    final String posterId = mission?['posterId'] ?? '';
+    final String assignedToId = mission?['assignedTo'] ?? '';
 
-    final chatCol = FirebaseFirestore.instance.collection('chats');
-    final chatSnap = await chatCol
-        .where('missionId', isEqualTo: widget.missionId)
-        .where('participants', arrayContains: user.uid)
-        .limit(1)
-        .get();
+    // 🔥 Détermine correctement l'autre utilisateur
+    final bool iAmOwner = user.uid == posterId;
+    final String otherUserId = iAmOwner ? assignedToId : posterId;
 
-    String chatId;
-    if (chatSnap.docs.isNotEmpty) {
-      chatId = chatSnap.docs.first.id;
-    } else {
-      final posterId = mission?['posterId'];
-      final assignedToId = mission?['assignedTo'];
-      final String? otherUserId = isOwner ? assignedToId : posterId;
-
-      if (otherUserId == null || otherUserId.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text("Erreur: Impossible de trouver le destinataire.")),
-          );
-        }
-        return;
-      }
-
-      final otherDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(otherUserId)
-          .get();
-      final otherData = otherDoc.data() ?? {};
-
-      // 🔹 Création du chat avec vrais noms + photos Firestore
-      final newChat = await chatCol.add({
-        'missionId': widget.missionId,
-        'participants': [user.uid, otherUserId],
-        'participantsInfo': {
-          user.uid: {
-            'name': myData['name'] ?? 'Moi',
-            'photoUrl': myData['photoUrl'] ?? '',
-          },
-          otherUserId: {
-            'name': otherData['name'] ?? 'Utilisateur',
-            'photoUrl': otherData['photoUrl'] ?? '',
-          },
-        },
-        'lastMessage': '',
-        'lastSenderId': '',
-        'status': 'active',
-        'typing': {
-          user.uid: false,
-          otherUserId: false,
-        },
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      chatId = newChat.id;
+    if (otherUserId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Erreur: destinataire introuvable.")),
+      );
+      return;
     }
 
-    // 🔹 Utilise push() (et non go()) pour éviter l’écran noir au retour
-    if (mounted) context.push('/chat/$chatId');
+    // --- Vérifie si un chat EXISTE déjà entre les deux utilisateurs pour cette mission
+    final chatQuery = await FirebaseFirestore.instance
+        .collection('chats')
+        .where('missionId', isEqualTo: missionId)
+        .where('participants', arrayContains: user.uid)
+        .get();
+
+    String? existingChatId;
+    for (final doc in chatQuery.docs) {
+      final data = doc.data();
+      final participants = List<String>.from(data['participants'] ?? []);
+      if (participants.contains(otherUserId)) {
+        existingChatId = doc.id;
+        break;
+      }
+    }
+
+    // Si trouvé → ouvrir
+    if (existingChatId != null) {
+      if (mounted) context.push('/chat/$existingChatId');
+      return;
+    }
+
+    // --- Sinon → créer le nouveau chat proprement
+    final myData = (await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get())
+        .data() ??
+        {};
+
+    final otherData = (await FirebaseFirestore.instance
+        .collection('users')
+        .doc(otherUserId)
+        .get())
+        .data() ??
+        {};
+
+    final newChat = await FirebaseFirestore.instance.collection('chats').add({
+      'missionId': missionId,
+      'participants': [user.uid, otherUserId],
+      'participantsInfo': {
+        user.uid: {
+          'name': myData['name'] ?? 'Moi',
+          'photoUrl': myData['photoUrl'] ?? '',
+        },
+        otherUserId: {
+          'name': otherData['name'] ?? 'Utilisateur',
+          'photoUrl': otherData['photoUrl'] ?? '',
+        },
+      },
+      'lastMessage': '',
+      'lastSenderId': '',
+      'status': 'active',
+      'typing': {
+        user.uid: false,
+        otherUserId: false,
+      },
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    if (mounted) context.push('/chat/${newChat.id}');
   }
 
+
   // =========================================================================
-  // LOGIQUE D'ANNULATION (inchangée)
+  // LOGIQUE D'ANNULATION MISSION
   // =========================================================================
 
   Future<void> _handleCancelMission() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Fonction interne qui exécute la logique lourde après confirmation
     Future<void> _performCancelLogic() async {
       try {
-        await FirebaseFirestore.instance
+        final missionRef = FirebaseFirestore.instance
             .collection('missions')
-            .doc(widget.missionId)
-            .update({
+            .doc(widget.missionId);
+
+        // --- 1. BATCH UPDATE (Mission + Offres) ---
+        final batch = FirebaseFirestore.instance.batch();
+
+        // A. Annuler la Mission
+        batch.update(missionRef, {
           'status': 'cancelled',
           'assignedTo': null,
           'cancelledAt': FieldValue.serverTimestamp(),
+          'cancelledBy': user.uid, // Utile pour savoir qui a annulé
         });
 
-        // tu pourras plus tard ajouter une notif ici
-        // await NotificationService.sendMissionCancelledNotification(...);
+        // B. Annuler toutes les Offres associées
+        final offersSnap = await missionRef.collection('offers').get();
+        for (final doc in offersSnap.docs) {
+          // On passe tout en 'cancelled', peu importe l'état d'avant
+          batch.update(doc.reference, {
+            'status': 'cancelled',
+            'cancelledAt': FieldValue.serverTimestamp(),
+          });
+        }
+
+        // C. Valider les changements en base
+        await batch.commit();
+
+
+        // --- 2. NOTIFICATIONS ---
+
+        if (isOwner) {
+          // CAS 1 : Le CLIENT annule
+          // On utilise la méthode du service qui prévient le prestataire assigné + les autres
+          await NotificationService.notifyMissionCancelledByClient(
+            missionId: widget.missionId,
+            missionTitle: mission?['title'] ?? 'Mission',
+            assignedProviderId: mission?['assignedTo'],
+          );
+        } else {
+          // CAS 2 : Le PRESTATAIRE se désiste (Annule sa participation)
+          // On récupère le nom du presta pour la notif
+          final userData = (await FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .get())
+              .data();
+
+          await NotificationService.notifyMissionCancelledByProvider(
+            clientUserId: mission?['posterId'] ?? '',
+            missionId: widget.missionId,
+            missionTitle: mission?['title'] ?? 'Mission',
+            providerName: userData?['name'] ?? 'Le prestataire',
+          );
+        }
+
       } catch (e) {
-        print("Erreur annulation: $e");
+        debugPrint("Erreur lors de l'annulation : $e");
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Erreur: impossible d’annuler la mission."),
+            content: Text("Erreur technique lors de l'annulation."),
             backgroundColor: Colors.redAccent,
           ));
         }
@@ -437,6 +895,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
 
     if (mission == null) return;
 
+    // --- 3. BOITE DE DIALOGUE DE CONFIRMATION ---
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: false,
@@ -461,19 +920,21 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                "Annuler la mission ?",
-                style: TextStyle(
+              Text(
+                isOwner ? "Annuler la mission ?" : "Vous désister ?",
+                style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                   color: kPrimary,
                 ),
               ),
               const SizedBox(height: 12),
-              const Text(
-                "Cette action est irréversible. Voulez-vous vraiment annuler cette mission ?",
+              Text(
+                isOwner
+                    ? "Cela annulera la mission et toutes les offres en cours."
+                    : "Cela annulera votre participation à cette mission.",
                 textAlign: TextAlign.center,
-                style: TextStyle(color: kGreyText, height: 1.5),
+                style: const TextStyle(color: kGreyText, height: 1.5),
               ),
               const SizedBox(height: 24),
               Row(
@@ -487,7 +948,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                             borderRadius: BorderRadius.circular(14)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: const Text("Non, revenir",
+                      child: const Text("Non, retour",
                           style: TextStyle(
                               color: kPrimary, fontWeight: FontWeight.w600)),
                     ),
@@ -495,16 +956,14 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: () async {
-                        Navigator.pop(context, true);
-                      },
+                      onPressed: () => Navigator.pop(context, true),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.redAccent,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
-                      child: const Text("Oui, annuler",
+                      child: const Text("Oui, confirmer",
                           style: TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w600)),
@@ -518,12 +977,13 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
       },
     );
 
+    // --- 4. EXÉCUTION ---
     if (confirmed == true) {
       await _performCancelLogic();
       if (mounted) {
         setState(() => mission?['status'] = 'cancelled');
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("🚫 Mission annulée avec succès."),
+          content: Text("🚫 Annulation confirmée."),
           backgroundColor: Colors.redAccent,
         ));
       }
@@ -620,16 +1080,13 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     );
 
     if (confirmed == true && mounted) {
-      // ✅ Correction : on construit correctement l'URI avec le paramètre
       final uri = Uri(
         path: '/missions/create',
         queryParameters: {'edit': widget.missionId},
       ).toString();
 
-      print("🟣 [DEBUG] Navigation vers $uri"); // ← devrait apparaître maintenant
-
       await context.push(uri);
-      await _loadMission(); // recharge la mission après retour
+      await _loadMission();
     }
   }
 
@@ -724,7 +1181,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
           .collection('missions')
           .doc(widget.missionId);
 
-      // 🔹 1. Réinitialise le statut et supprime les anciens champs
       await missionRef.update({
         'status': 'open',
         'assignedTo': null,
@@ -734,21 +1190,18 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         'reopenedAt': FieldValue.serverTimestamp(),
       });
 
-      // 🔹 2. Supprime les anciennes offres
       final offersRef = missionRef.collection('offers');
       final oldOffers = await offersRef.get();
       for (var doc in oldOffers.docs) {
         await doc.reference.delete();
       }
 
-      // 🔹 3. (Optionnel) Supprime les anciennes questions
       final questionsRef = missionRef.collection('questions');
       final oldQuestions = await questionsRef.get();
       for (var doc in oldQuestions.docs) {
         await doc.reference.delete();
       }
 
-      // 🔹 4. Rafraîchit l’UI
       if (mounted) {
         setState(() => mission?['status'] = 'open');
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -760,29 +1213,176 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   }
 
   Future<void> _handleLeaveReview() async {
-    print("Action: Laisser un avis");
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Logique d'avis à implémenter.")),
-    );
+    if (!mounted || mission == null) return;
+
+    final current = FirebaseAuth.instance.currentUser?.uid;
+    final posterId = mission?['posterId'] ?? '';
+    final providerId = mission?['assignedTo'] ?? '';
+
+    if (current == posterId && providerId.isNotEmpty) {
+      context.pushNamed(
+        'reviews',
+        pathParameters: {'userId': providerId},
+        queryParameters: {
+          'missionId': widget.missionId,
+          'missionTitle': mission?['title'] ?? 'Mission',
+        },
+      );
+    } else if (current == providerId && posterId.isNotEmpty) {
+      context.pushNamed(
+        'reviews',
+        pathParameters: {'userId': posterId},
+        queryParameters: {
+          'missionId': widget.missionId,
+          'missionTitle': mission?['title'] ?? 'Mission',
+        },
+      );
+    }
   }
 
+
+
+
+  // --------------------------------------------------------------------------
+  // MARQUER COMME TERMINÉE (CLIENT UNIQUEMENT)
+  // --------------------------------------------------------------------------
   Future<void> _handleMarkAsDone() async {
-    print("Action: Marquer comme terminée");
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text("Logique 'Marquer comme terminée' à implémenter.")),
+    if (!mounted || mission == null) return;
+
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 50,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                "Marquer la mission comme terminée ?",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: kPrimary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                "Confirme que le prestataire a bien terminé la mission.",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: kGreyText, height: 1.5),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: kPrimary, width: 1.4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text(
+                        "Annuler",
+                        style: TextStyle(
+                          color: kPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kPrimary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      child: const Text(
+                        "Oui, terminé",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
+
+    if (confirmed != true) return;
+
+    final missionRef =
+    FirebaseFirestore.instance.collection('missions').doc(widget.missionId);
+    await missionRef.update({
+      'status': 'done',
+      'doneAt': FieldValue.serverTimestamp(),
+    });
+
+    final assignedToId = (mission?['assignedTo'] ?? '') as String? ?? '';
+
+    if (assignedToId.isNotEmpty) {
+      // ✅ NOTIF ROBUSTE : Mission terminée
+      await NotificationService.notifyMissionMarkedDone(
+        providerUserId: assignedToId,
+        missionId: widget.missionId,
+        missionTitle: mission?['title'] ?? 'Mission',
+      );
+    }
+
+    if (mounted) {
+      setState(() => mission?['status'] = 'done');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("✅ Mission marquée comme terminée."),
+          backgroundColor: kPrimary,
+        ),
+      );
+    }
   }
 
   // =========================================================================
+  // MÉTHODE BUILD (Reste inchangée, affichage seulement)
   // =========================================================================
-  //
-  //    MÉTHODE BUILD (Contient les helpers UI)
-  //
-  // =========================================================================
-  // =========================================================================
+
+  String _formatDurationLabel(dynamic raw) {
+    if (raw == null) return "Durée non précisée";
+    if (raw is String && raw.trim().isNotEmpty) return raw;
+    if (raw is num) {
+      if (raw <= 0) return "Durée non précisée";
+      if (raw < 1.5) {
+        return "≈ ${raw.toStringAsFixed(1)} h";
+      }
+      return "${raw.toStringAsFixed(1)} h";
+    }
+    return "Durée non précisée";
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -817,35 +1417,35 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     final flexibility = (mission?['flexibility'] ?? 'Flexible').toString();
     final status = (mission?['status'] ?? 'open').toString();
 
+    // 🔹 Catégorie + durée depuis Firestore
+    final categoryLabel =
+    (mission?['categoryLabel'] ?? mission?['category'] ?? 'Catégorie non précisée')
+        .toString();
+
+
     return Scaffold(
       backgroundColor: kBackground,
-      // --- 1. AppBar ---
-      appBar: AppBar(
-        backgroundColor: kPrimary,
-        elevation: 3,
-        foregroundColor: Colors.white,
-        title: const Text("Détails de la mission"),
+      appBar: buildAppleMissionAppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: "Détails de la mission",
       ),
 
-      // --- 2. Le Body ---
       body: SingleChildScrollView(
         controller: _scrollController,
         child: Column(
           children: [
-            // --- 3. La "Feuille de Contenu" unique ---
             Container(
-              color: kCard, // Fond blanc
+              color: kCard,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // =========================================================
-                  // ✅ SECTION MODIFIÉE (Premium Layout v4: Typo Pure)
-                  // =========================================================
-
-                  // --- Titre & Budget (Typo "Premium") ---
+                  // --- Titre & Budget ---
                   Padding(
                     padding:
-                    const EdgeInsets.fromLTRB(20, 24, 20, 20), // Padding
+                    const EdgeInsets.fromLTRB(20, 24, 20, 20),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -853,125 +1453,167 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                           child: Text(
                             title,
                             style: const TextStyle(
-                              fontSize: 28, // ✅ Très grand
+                              fontSize: 28,
                               fontWeight: FontWeight.w700,
                               color: Color(0xFF2F2E41),
-                              height: 1.3, // Espace de ligne
+                              height: 1.3,
                             ),
                           ),
                         ),
                         const SizedBox(width: 16),
-                        // ✅ Plus de Container, juste du texte.
                         Text(
                           "${budget.toStringAsFixed(0)} €",
                           style: const TextStyle(
                             color: kPrimary,
-                            fontWeight: FontWeight.w800, // Plus gras
-                            fontSize: 26, // ✅ Très grand
+                            fontWeight: FontWeight.w800,
+                            fontSize: 26,
                           ),
                         ),
                       ],
                     ),
                   ),
 
-                  // --- Séparateur Visuel ---
                   const Padding(
-                    padding:
-                    EdgeInsets.fromLTRB(20, 0, 20, 16), // Padding ajusté
-                    child: Divider(thickness: 0.5), // ✅ Séparateur
+                    padding: EdgeInsets.fromLTRB(20, 0, 20, 16),
+                    child: Divider(thickness: 0.5),
                   ),
 
-                  // --- Chips d'info & Stepper de Statut ---
+                  // --- Chips d'infos ---
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // Colonne gauche (infos)
+                        // ⬅️ Colonne chips (gauche)
                         Expanded(
                           flex: 2,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               _chip(Icons.location_on, mode),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 8),
+
                               _chip(Icons.calendar_month, 'Avant le $deadline'),
-                              const SizedBox(height: 6),
-                              _chip(Icons.timer, flexibility),
+                              const SizedBox(height: 8),
+
+                              _chip(Icons.access_time, flexibility),
+                              const SizedBox(height: 8),
+
+                              _chip(Icons.timer, _formatDurationHours(mission)),
+                              const SizedBox(height: 8),
+
+                              _chip(Icons.category, mission?['category'] ?? 'Catégorie non spécifiée'),
                             ],
                           ),
                         ),
+                        const SizedBox(height: 8),
+
                         const SizedBox(width: 12),
-                        // Colonne droite (statuts)
+
+                        // ➡️ Stepper des statuts (droite)
                         Expanded(
                           flex: 1,
-                          child: (status == 'cancelled' || status == 'draft')
-                              ? Align(
-                            alignment: Alignment.centerRight,
-                            child: StatusBadge(
-                                type: 'mission', status: status),
-                          )
-                              : Builder(builder: (context) {
-                            final statusMap = {
-                              'open': 1,
-                              'in_progress': 2,
-                              'done': 3,
-                              'cancelled': 0,
-                            };
+                          child: Builder(
+                            builder: (context) {
+                              final statusMap = {
+                                'open': 1,
+                                'in_progress': 2,
+                                'done': 3,
+                                'cancelled': 0,
+                              };
 
-                            final currentLevel = statusMap[status] ?? 0;
+                              final currentLevel = statusMap[status] ?? 0;
 
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Opacity(
-                                  opacity: 1.0,
-                                  child: StatusBadge(
-                                      type: 'mission', status: 'open'),
-                                ),
-                                const SizedBox(height: 6),
-                                Opacity(
-                                  opacity:
-                                  (currentLevel >= 2) ? 1.0 : 0.4,
-                                  child: StatusBadge(
-                                      type: 'mission',
-                                      status: 'in_progress'),
-                                ),
-                                const SizedBox(height: 6),
-                                Opacity(
-                                  opacity:
-                                  (currentLevel >= 3) ? 1.0 : 0.4,
-                                  child: StatusBadge(
-                                      type: 'mission', status: 'done'),
-                                ),
-                              ],
-                            );
-                          }),
-                        ),
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Opacity(
+                                    opacity: 1.0,
+                                    child: StatusBadge(type: 'mission', status: 'open'),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Opacity(
+                                    opacity: (currentLevel >= 2) ? 1.0 : 0.35,
+                                    child: StatusBadge(type: 'mission', status: 'in_progress'),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Opacity(
+                                    opacity: (currentLevel >= 3) ? 1.0 : 0.35,
+                                    child: StatusBadge(type: 'mission', status: 'done'),
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        )
                       ],
                     ),
                   ),
 
-                  // =========================================================
-                  // FIN DE LA SECTION MODIFIÉE
-                  // =========================================================
 
-                  // --- Badge de Statut (sauf si 'open') ---
+
+                  // --- Badge statuts non-open ---
                   if (status != 'open')
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+                      padding:
+                      const EdgeInsets.fromLTRB(20, 20, 20, 10),
                       child: _buildNonOpenStatusBadge(status),
                     ),
 
+                  const SizedBox(height: 10),
+
                   // --- Boutons d'action ---
                   Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 20),
-                    child: _buildActionButtons(context, status),
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (!isOwner && status == 'open')
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: Color(0xFF2C2C2E),
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.20),
+                                      blurRadius: 6,
+                                      offset: Offset(0, 3),
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.person, size: 14, color: Colors.white),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      "${mission?['offersCount'] ?? 0} offre${(mission?['offersCount'] ?? 0) > 1 ? 's' : ''}",
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+
+                        if (!isOwner && status == 'open') const SizedBox(height: 12),
+
+                        _buildActionButtons(context, status),
+                      ],
+                    ),
                   ),
 
-                  // --- Section Description ---
+
+                  // --- Description ---
                   _buildSection(
                     context,
                     title: "Description",
@@ -985,7 +1627,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                           style: const TextStyle(
                               fontSize: 15, height: 1.5, color: kGreyText),
                         ),
-                        // ✅ Widget Extrait
                         PhotoGridSection(
                           photoUrls: allPhotos,
                           onPhotoTap: (url) =>
@@ -995,13 +1636,12 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                     ),
                   ),
 
-                  // --- Section Questions Publiques ---
+                  // --- Questions publiques ---
                   _buildSection(
                     context,
                     title: "Questions publiques",
                     child: Column(
                       children: [
-                        // ✅ Widget Extrait
                         MissionQuestionsSection(
                           missionId: widget.missionId,
                           stream: _questionsStream,
@@ -1041,7 +1681,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                     ),
                   ),
 
-                  // --- Section Posté par ---
+                  // --- Posté par ---
                   _buildSection(
                     context,
                     title: "Posté par",
@@ -1074,16 +1714,12 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                       ),
                       trailing: IconButton(
                         icon: const Icon(Icons.chevron_right),
-                        onPressed: () {
-                          if (poster?['id'] != null) {
-                            context.push('/profile/${poster!['id']}');
-                          }
-                        },
+                        onPressed: () => context.push('/profile/${mission?['posterId']}'),
                       ),
                     ),
                   ),
 
-                  // --- Section Localisation ---
+                  // --- Localisation ---
                   _buildSection(
                     context,
                     title: "Localisation",
@@ -1095,8 +1731,12 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                             const Icon(Icons.place_outlined, color: kGreyText),
                             const SizedBox(width: 6),
                             Expanded(
-                                child: Text(location,
-                                    style: const TextStyle(color: kGreyText))),
+                              child: Text(
+                                location,
+                                style:
+                                const TextStyle(color: kGreyText),
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 12),
@@ -1106,8 +1746,8 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                             child: SizedBox(
                               height: 160,
                               child: GoogleMap(
-                                initialCameraPosition:
-                                CameraPosition(target: _position!, zoom: 13.5),
+                                initialCameraPosition: CameraPosition(
+                                    target: _position!, zoom: 13.5),
                                 markers: {
                                   Marker(
                                     markerId: const MarkerId("mission"),
@@ -1123,7 +1763,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                     ),
                   ),
 
-                  // Espace en bas pour le défilement
                   const SizedBox(height: 40),
                 ],
               ),
@@ -1135,7 +1774,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   }
 
   // =========================================================================
-  // HELPERS UI (Restent ici car dépendent de l'état local)
+  // HELPERS UI
   // =========================================================================
 
   Widget _buildActionButtons(BuildContext context, String status) {
@@ -1145,13 +1784,14 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     final String assignedTo = (mission?['assignedTo'] ?? '').toString();
     final bool isAssignedToMe = (assignedTo == currentUser.uid);
 
-    // --- 🧩 1. VUE CLIENT ---
+
+
+    // --- 1. VUE CLIENT ---
     if (isOwner) {
       switch (status) {
         case 'open':
           return Column(
             children: [
-              // --- Bouton "Voir les offres reçues"
               StreamBuilder<QuerySnapshot>(
                 stream: FirebaseFirestore.instance
                     .collection('missions')
@@ -1162,16 +1802,13 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                   final count = snap.data?.docs.length ?? 0;
                   return _buildSecondaryButton(
                     context,
-                    onPressed: () =>
-                        context.push('/missions/${widget.missionId}/offers'),
+                    onPressed: () => context.push('/missions/${widget.missionId}/offers'),
                     icon: Icons.people_outline,
                     label: "Voir les offres reçues ($count)",
                   );
                 },
               ),
               const SizedBox(height: 12),
-
-              // --- Bouton "Modifier la mission"
               _buildPrimaryButton(
                 context,
                 onPressed: _confirmEditMission,
@@ -1179,8 +1816,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                 label: "Modifier la mission",
               ),
               const SizedBox(height: 12),
-
-              // --- Bouton "Annuler la mission"
               _buildDangerButton(
                 context,
                 onPressed: _handleCancelMission,
@@ -1194,6 +1829,13 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
           return Column(
             children: [
               _buildPrimaryButton(
+                context,
+                onPressed: _handleMarkAsDone,
+                icon: Icons.check_circle_outline,
+                label: "Marquer comme terminée",
+              ),
+              const SizedBox(height: 12),
+              _buildSecondaryButton(
                 context,
                 onPressed: _handleOpenChat,
                 icon: Icons.chat_bubble_outline,
@@ -1208,13 +1850,37 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
               ),
             ],
           );
+
         case 'done':
-          return _buildPrimaryButton(
-            context,
-            onPressed: _handleLeaveReview,
-            icon: Icons.star_outline,
-            label: "Laisser un avis au prestataire",
+          return FutureBuilder<bool>(
+            future: _hasUserAlreadyReviewed(),
+            builder: (context, snap) {
+              if (!snap.hasData) {
+                return const SizedBox.shrink();
+              }
+
+              final already = snap.data!;
+
+              if (already) {
+                return _buildInfoBox(
+                  context,
+                  icon: Icons.check_circle,
+                  label: "Vous avez déjà laissé un avis",
+                  color: Colors.green,
+                );
+              }
+
+              // NEW → bouton laisser avis
+              return _buildPrimaryButton(
+                context,
+                onPressed: _handleLeaveReview,
+                icon: Icons.star_outline,
+                label: "Laisser un avis",
+              );
+            },
           );
+
+
         case 'cancelled':
           return _buildPrimaryButton(
             context,
@@ -1222,71 +1888,66 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
             icon: Icons.refresh_outlined,
             label: "Rouvrir la mission",
           );
+        case 'closed':
+          return _buildStatusBadge(
+            text: "Mission clôturée",
+            color: kPrimary,
+            icon: Icons.lock_outline,
+          );
+
+
         default:
           return const SizedBox.shrink();
       }
     }
-    // --- 🧩 2. VUE PRESTATAIRE ---
+
+    // --- 2. VUE PRESTATAIRE ---
+    // VUE PRESTATAIRE
     else {
       switch (status) {
         case 'open':
           if (_hasMadeOffer) {
-            return _buildInfoBox(
-              context,
-              icon: Icons.check_circle,
-              label: "Offre déjà envoyée",
-              color: kPrimary,
-            );
-          } else {
-            return _buildPrimaryButton(
-              context,
-              onPressed: _onOfferPressed,
-              icon: Icons.add_circle_outline,
-              label: "Faire une offre maintenant",
-            );
+            return Column(children: [
+              _buildInfoBox(context, icon: Icons.check_circle, label: "Offre envoyée", color: kPrimary),
+              const SizedBox(height: 12),
+              _buildSecondaryButton(context, onPressed: _onEditOfferPressed, icon: Icons.edit_outlined, label: "Modifier mon offre"),
+              const SizedBox(height: 12),
+              _buildDangerButton(context, onPressed: _onWithdrawOfferPressed, icon: Icons.delete_outline, label: "Retirer mon offre"),
+            ]);
           }
+          return _buildPrimaryButton(context, onPressed: _onOfferPressed, icon: Icons.add_circle_outline, label: "Faire une offre");
+
         case 'in_progress':
           if (isAssignedToMe) {
-            return Column(
-              children: [
-                _buildPrimaryButton(
-                  context,
-                  onPressed: _handleOpenChat,
-                  icon: Icons.chat_bubble_outline,
-                  label: "Ouvrir la discussion",
-                ),
-                const SizedBox(height: 12),
-                _buildSuccessButton(
-                  context,
-                  onPressed: _handleMarkAsDone,
-                  icon: Icons.check_circle_outline,
-                  label: "Marquer comme terminée",
-                ),
-              ],
-            );
-          } else {
-            return const SizedBox.shrink();
+            return Column(children: [
+              _buildInfoBox(context, icon: Icons.handshake_outlined, label: "Vous êtes le prestataire !", color: Colors.green[700]!),
+              const SizedBox(height: 12),
+              _buildPrimaryButton(context, onPressed: _handleOpenChat, icon: Icons.chat_bubble_outline, label: "Ouvrir la discussion"),
+              const SizedBox(height: 12),
+              _buildDangerButton(context, onPressed: _handleCancelMission, icon: Icons.cancel_outlined, label: "Annuler (Désistement)"),
+            ]);
           }
+          return const SizedBox.shrink();
+
         case 'done':
-          return _buildSecondaryButton(
-            context,
-            onPressed: _handleLeaveReview,
-            icon: Icons.rate_review_outlined,
-            label: "Voir l'avis du client",
-          );
-        case 'cancelled':
+          if (isAssignedToMe) {
+            return _buildPrimaryButton(context, onPressed: _handleLeaveReview, icon: Icons.star_outline, label: "Laisser un avis");
+          }
+          return const SizedBox.shrink();
+
         default:
           return const SizedBox.shrink();
       }
     }
+
   }
 
-  // --- Helpers de style pour les boutons ---
-
-  Widget _buildPrimaryButton(BuildContext context,
-      {required VoidCallback onPressed,
+  Widget _buildPrimaryButton(
+      BuildContext context, {
+        required VoidCallback onPressed,
         required IconData icon,
-        required String label}) {
+        required String label,
+      }) {
     return ElevatedButton.icon(
       onPressed: onPressed,
       icon: Icon(icon),
@@ -1302,10 +1963,12 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     );
   }
 
-  Widget _buildSecondaryButton(BuildContext context,
-      {required VoidCallback onPressed,
+  Widget _buildSecondaryButton(
+      BuildContext context, {
+        required VoidCallback onPressed,
         required IconData icon,
-        required String label}) {
+        required String label,
+      }) {
     return OutlinedButton.icon(
       onPressed: onPressed,
       icon: Icon(icon, size: 18),
@@ -1321,31 +1984,36 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
       ),
     );
   }
-
-  Widget _buildSuccessButton(BuildContext context,
-      {required VoidCallback onPressed,
-        required IconData icon,
-        required String label}) {
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
-        minimumSize: const Size.fromHeight(50),
-        side: const BorderSide(color: Colors.green, width: 1.3),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        foregroundColor: Colors.green,
+  Widget _alreadyReviewedBox() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.check_circle, color: Colors.green),
+          SizedBox(width: 8),
+          Text(
+            "Avis déjà donné",
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              color: Colors.green,
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildDangerButton(BuildContext context,
-      {required VoidCallback onPressed,
+  Widget _buildDangerButton(
+      BuildContext context, {
+        required VoidCallback onPressed,
         required IconData icon,
-        required String label}) {
+        required String label,
+      }) {
     return OutlinedButton.icon(
       onPressed: onPressed,
       icon: Icon(icon, size: 18),
@@ -1362,8 +2030,12 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     );
   }
 
-  Widget _buildInfoBox(BuildContext context,
-      {required IconData icon, required String label, required Color color}) {
+  Widget _buildInfoBox(
+      BuildContext context, {
+        required IconData icon,
+        required String label,
+        required Color color,
+      }) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1375,19 +2047,20 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         children: [
           Icon(icon, color: color),
           const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w600,
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
             ),
           ),
         ],
       ),
     );
   }
-
-  // --- Helpers de statut ---
 
   Widget _buildStatusBadge({
     required String text,
@@ -1419,21 +2092,12 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   }
 
   Widget _buildInProgressBadge(BuildContext context) {
-    if (assignedToUser == null) {
-      // Fallback
-      return _buildStatusBadge(
-        text: "Mission en cours...",
-        color: Colors.orange[700]!,
-        icon: Icons.hourglass_bottom_outlined,
-      );
-    }
 
-    // Données du prestataire
     final name = assignedToUser?['name'] ?? 'Prestataire';
     final formattedName = formatUserName(name);
     final rating = (assignedToUser?['rating'] ?? 0).toDouble();
     final reviewsCount = assignedToUser?['reviewsCount'] ?? 0;
-    final userId = assignedToUser?['id'] ?? assignedToUser?['uid'] ?? '';
+    final userId = mission?['assignedTo'] ?? '';
 
     return GestureDetector(
       onTap: () {
@@ -1448,32 +2112,29 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: Colors.green[200]!),
         ),
-        // ✅ C'est ce Column qui crée les deux lignes
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // --- Ligne 1: "En cours avec un prestataire" ---
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.handshake_outlined, // ou Icons.assignment_turned_in_outlined
-                    color: Colors.green[800]!,
-                    size: 16), // Taille 16
+                Icon(
+                  Icons.handshake_outlined,
+                  color: Colors.green[800]!,
+                  size: 16,
+                ),
                 const SizedBox(width: 6),
                 Text(
                   "En cours avec un prestataire",
                   style: TextStyle(
                     color: Colors.green[800]!,
                     fontWeight: FontWeight.w600,
-                    fontSize: 14, // Taille 14
+                    fontSize: 14,
                   ),
                 ),
               ],
             ),
-
-            const SizedBox(height: 6), // Espace entre les deux lignes
-
-            // --- Ligne 2: "Moulay C. ⭐ 5.0 (1 avis)" ---
+            const SizedBox(height: 6),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -1503,7 +2164,13 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   Widget _buildNonOpenStatusBadge(String status) {
     switch (status) {
       case 'in_progress':
-        return _buildInProgressBadge(context);
+        if (isOwner) {
+          // CLIENT → voit le prestataire choisi (normal)
+          return _buildInProgressBadge(context);
+        }
+        // PRESTATAIRE → NE DOIT RIEN VOIR EN HAUT
+        return const SizedBox.shrink();
+
 
       case 'completed':
       case 'done':
@@ -1553,8 +2220,8 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
               child: Material(
                 type: MaterialType.transparency,
                 child: IconButton(
-                  icon:
-                  const Icon(Icons.close, color: Colors.white, size: 30.0),
+                  icon: const Icon(Icons.close,
+                      color: Colors.white, size: 30.0),
                   style: IconButton.styleFrom(
                     backgroundColor: Colors.black.withOpacity(0.4),
                     padding: const EdgeInsets.all(8),
@@ -1572,7 +2239,8 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   }
 
   Widget _chip(IconData icon, String label) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    padding:
+    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
     decoration: BoxDecoration(
       color: kBackground,
       borderRadius: BorderRadius.circular(99),
@@ -1581,13 +2249,13 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: kGreyText), // <- couleur kGreyText
+        Icon(icon, size: 16, color: kGreyText),
         const SizedBox(width: 5),
         Flexible(
           child: Text(
             label,
             style: const TextStyle(
-              color: kGreyText, // <- couleur kGreyText
+              color: kGreyText,
               fontWeight: FontWeight.w500,
             ),
             overflow: TextOverflow.ellipsis,
@@ -1597,8 +2265,11 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     ),
   );
 
-  Widget _buildSection(BuildContext context,
-      {required String title, required Widget child}) {
+  Widget _buildSection(
+      BuildContext context, {
+        required String title,
+        required Widget child,
+      }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(

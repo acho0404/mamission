@@ -6,6 +6,8 @@ import 'old_mission_detail_page.dart';
 import 'package:mamission/shared/widgets/status_badge.dart';
 import 'package:mamission/shared/widgets/card_mission.dart';
 import 'package:mamission/shared/widgets/card_offer.dart';
+import 'package:mamission/shared/apple_appbar.dart';
+
 
 class MissionListPage extends StatefulWidget {
   const MissionListPage({super.key});
@@ -29,71 +31,67 @@ class _MissionListPageState extends State<MissionListPage>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF8F6FF),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF6C63FF),
-        elevation: 2,
-        title: const Text("Mes missions", style: TextStyle(color: Colors.white)),
-        centerTitle: true,
-        foregroundColor: Colors.white,
+      appBar: buildAppleMissionAppBar(
+        title: "Mes missions",
       ),
 
       body: Column(
         children: [
+          // --- Voici le nouveau design pour tes onglets ---
           Container(
-            color: const Color(0xFF6C63FF),
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            // ✅ On utilise un VRAI TabBar, synchronisé avec le TabBarView
+            // On donne une hauteur fixe et un peu de marge
+            height: 48,
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            decoration: BoxDecoration(
+              // C'est le "rail" de fond, en gris très clair
+              color: Colors.grey.shade200,
+              borderRadius: BorderRadius.circular(40),
+            ),
             child: TabBar(
               controller: _tabController,
+              // C'est l'indicateur (le "cachet" violet qui bouge)
               indicator: BoxDecoration(
-                color: Colors.white,
+                color: const Color(0xFF6C63FF), // Ta couleur principale
                 borderRadius: BorderRadius.circular(40),
+                boxShadow: [ // Une petite ombre discrète
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
-              labelColor: const Color(0xFF6C63FF),
-              unselectedLabelColor: Colors.white,
+
+              // Padding *autour* de l'indicateur pour l'effet "encastré"
+              indicatorPadding: const EdgeInsets.all(4.0),
+              indicatorSize: TabBarIndicatorSize.tab,
+
+              labelColor: Colors.white, // Texte sélectionné (blanc)
+              unselectedLabelColor: const Color(0xFF6C63FF), // Texte non-sélectionné (violet)
               labelStyle: const TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 15,
               ),
-              indicatorSize: TabBarIndicatorSize.tab,
-              indicatorPadding: const EdgeInsets.symmetric(horizontal: 4),
-              dividerColor: Colors.transparent,
+              dividerColor: Colors.transparent, // Parfait
               tabs: const [
-                Tab(text: "Postées"),
+                Tab(text: "Demandes postées"),
                 Tab(text: "Offres envoyées"),
               ],
             ),
           ),
+
+          // --- Ton contenu (qui utilise Firestore) reste ici ---
           Expanded(
-            // ✅ On remet le TabBarView pour le "swipe"
             child: TabBarView(
               controller: _tabController,
               children: const [
-                // ✅ On appelle les nouveaux widgets "KeepAlive"
-                PostedMissionsTab(),
-                SentOffersTab(),
+                PostedMissionsTab(), // Ton widget qui charge les demandes
+                SentOffersTab(),      // Ton widget qui charge les offres
               ],
             ),
           ),
         ],
       ),
-
-      // ✅ FAB pour créer une mission
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          context.push('/missions/create');
-        },
-        backgroundColor: const Color(0xFF6C63FF),
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text(
-          "Créer une mission",
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 } // <-- Fin de la classe principale
@@ -255,8 +253,9 @@ class _SentOffersTabState extends State<SentOffersTab>
             };
 
             // 5. Construire le ListView instantanément
-            return ListView.builder(
-              padding: const EdgeInsets.only(top: 12, bottom: 80),
+            return ListView.separated(
+              padding: const EdgeInsets.only(top: 12, bottom: 120),
+              separatorBuilder: (_, __) => const SizedBox(height: 16),
               itemCount: offers.length,
               itemBuilder: (context, i) {
                 final o = offers[i];
@@ -264,23 +263,13 @@ class _SentOffersTabState extends State<SentOffersTab>
                 final missionId = o.reference.parent.parent!.id;
 
                 final mission = missionsMap[missionId];
-                if (mission == null) {
-                  return const SizedBox.shrink();
-                }
+                if (mission == null) return const SizedBox.shrink();
 
-                final title = mission['title'] ?? 'Mission inconnue';
-                final location = mission['location'] ?? '—';
-                final msg = offer['message'] ?? '';
-                final price = offer['price'] ?? 0;
-                final status = offer['status'] ?? 'pending';
-
-                // ...
                 return CardOffer(
                   offerData: offer,
-                  missionData: mission, // 'mission' contient déjà photoUrl, title, etc.
-                  onTap: () => context.push('/missions/$missionId'),
+                  missionData: mission,
+                  onTap: () => context.push('/missions/$missionId/offers/${o.id}'),
                 );
-// ...
               },
             );
           },

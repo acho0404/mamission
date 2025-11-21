@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.mamission.app">
 
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Mamission"
         android:name="${applicationName}"
@@ -16,7 +17,6 @@
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
 
-            <!-- Thème visible pendant le chargement -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
@@ -27,18 +27,15 @@
             </intent-filter>
         </activity>
 
-        <!-- ✅ Clé Google Maps -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="AIzaSyCXltusJoTE4wN04ETzYqLUSFRzRcX7DhY" />
 
-        <!-- Ne pas supprimer -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
 
-    <!-- Requis pour la détection de texte par Flutter -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />

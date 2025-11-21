@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Importé pour SystemNavigator
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 class ShellScaffold extends StatefulWidget {
@@ -12,47 +12,55 @@ class ShellScaffold extends StatefulWidget {
 
 class _ShellScaffoldState extends State<ShellScaffold> {
   DateTime? _lastBackPressTime;
-  static const _routes = ['/explore', '/missions', '/chat', '/profile'];
 
-  // ✅ Fonction corrigée
+  // --- ROUTES : inchangé ---
+  static const _routes = [
+    '/explore',        // index 0
+    '/missions',       // index 1
+    '/create-mission', // index 2 (special, jamais "sélectionné")
+    '/chat',           // index 3
+    '/profile',        // index 4
+  ];
+
   int _calculateCurrentIndex(BuildContext context) {
-    // --- ✅ CORRECTION ICI ---
-    // On récupère le "RouteMatchList"
-    final RouteMatchList matchList = GoRouter.of(context).routerDelegate.currentConfiguration;
-    // On prend l'URI de cette liste et on la convertit en String
-    final String location = matchList.uri.toString();
-    // --- ⛔ FIN CORRECTION ---
+    final location = GoRouter.of(context)
+        .routerDelegate
+        .currentConfiguration
+        .uri
+        .toString();
 
-    // On trouve quel onglet correspond à la route actuelle
-    if (location.startsWith(_routes[1])) return 1; // Missions
-    if (location.startsWith(_routes[2])) return 2; // Chat
-    if (location.startsWith(_routes[3])) return 3; // Profil
-    return 0; // Explorer (par défaut)
+    if (location.startsWith('/missions')) return 1;
+    if (location.startsWith('/create-mission')) return 2;
+    if (location.startsWith('/chat')) return 3;
+    if (location.startsWith('/profile')) return 4;
+    return 0; // Explorer
   }
 
-
   void _onTap(int i) {
-    // On navigue avec GoRouter. L'index sera mis à jour
-    // automatiquement par le 'build' suivant.
+    HapticFeedback.lightImpact();
     context.go(_routes[i]);
   }
 
+  void _onCreateTap() {
+    HapticFeedback.lightImpact();
+    context.push('/create-mission');
+  }
+
   void _onPopInvoked(bool didPop) {
-    if (didPop) return; // Si un pop a déjà eu lieu, on ne fait rien
+    if (didPop) return;
 
-    final int currentIndex = _calculateCurrentIndex(context);
+    final currentIndex = _calculateCurrentIndex(context);
 
-    // 🔹 Si on n’est pas sur l’accueil → on revient à "Explorer"
     if (currentIndex != 0) {
-      context.go(_routes[0]);
-      return; // On ne quitte pas l'app
+      context.go('/explore');
+      return;
     }
 
-    // 🔹 Si on est déjà sur l’accueil → double appui pour quitter
     final now = DateTime.now();
     if (_lastBackPressTime == null ||
         now.difference(_lastBackPressTime!) > const Duration(seconds: 2)) {
       _lastBackPressTime = now;
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Appuyez encore pour quitter'),
@@ -60,103 +68,220 @@ class _ShellScaffoldState extends State<ShellScaffold> {
           duration: Duration(seconds: 2),
         ),
       );
-      // On ne quitte pas l'app (on attend le 2e clic)
     } else {
-      // ✅ C'est le 2e clic, on quitte l'app
       SystemNavigator.pop();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final active = theme.colorScheme.primary;
-    final inactive = Colors.grey.shade700;
+    const primary = Color(0xFF6C63FF);
+    const primarySoft = Color(0xFF9381FF);
+    final inactive = Colors.grey.shade400;
 
-    final items = const [
-      (icon: Icons.explore, label: 'Explorer'),
-      (icon: Icons.work_outline, label: 'Missions'),
-      (icon: Icons.chat_bubble_outline, label: 'Chat'),
-      (icon: Icons.person_outline, label: 'Profil'),
+    // ✅ On garde tes rôles d’icônes
+    const items = [
+      Icons.search_rounded,              // 0 Explorer
+      Icons.work_outline_rounded,        // 1 Missions
+      Icons.add,                         // 2 Créer (centre)
+      Icons.chat_bubble_outline_rounded, // 3 Messages
+      Icons.account_circle_outlined,     // 4 Profil
     ];
 
-    // ✅ On calcule l'index à chaque build, basé sur GoRouter
-    final int currentIndex = _calculateCurrentIndex(context);
+    final currentIndex = _calculateCurrentIndex(context);
 
     return PopScope(
-      canPop: false, // On gère le "retour" nous-mêmes
-      onPopInvoked: _onPopInvoked, // 👈 On utilise la nouvelle méthode
+      canPop: false,
+      onPopInvoked: _onPopInvoked,
       child: Scaffold(
         resizeToAvoidBottomInset: true,
         body: widget.child,
         bottomNavigationBar: SafeArea(
-          minimum: const EdgeInsets.only(bottom: 6),
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 12),
-            height: 72,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: active.withOpacity(0.25),
-                width: 1.2,
-              ),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x11000000),
-                  blurRadius: 10,
-                  offset: Offset(0, -1),
+          top: false,
+          child: SizedBox(
+            height: 64, // 🔹 plus fin
+            child: Stack(
+              children: [
+                // Fond blanc + légère ombre
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 12,
+                          offset: const Offset(0, -3),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ],
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: List.generate(items.length, (i) {
-                final item = items[i];
-                // ✅ On utilise currentIndex (calculé) au lieu de _index (état)
-                final selected = currentIndex == i;
 
-                return InkWell(
-                  onTap: () => _onTap(i),
-                  splashColor: Colors.transparent,
-                  highlightColor: Colors.transparent,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    child: Transform.translate(
-                      offset: Offset(0, selected ? -2 : 0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          AnimatedScale(
-                            scale: selected ? 1.15 : 1.0,
-                            duration: const Duration(milliseconds: 180),
-                            curve: Curves.easeOutBack,
-                            child: Icon(
-                              item.icon,
-                              size: 26,
-                              color: selected ? active : inactive,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          AnimatedDefaultTextStyle(
-                            duration: const Duration(milliseconds: 180),
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight:
-                              selected ? FontWeight.w600 : FontWeight.w400,
-                              color: selected ? active : inactive,
-                              letterSpacing: 0.1,
-                            ),
-                            child: Text(item.label),
-                          ),
-                        ],
+                // Quart de cercle violet discret
+                Positioned(
+                  left: -80,
+                  bottom: -80,
+                  child: Container(
+                    width: 180,
+                    height: 180,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [primary, primarySoft],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
                       ),
                     ),
                   ),
-                );
-              }),
+                ),
+
+                // Ligne d’icônes
+                Positioned.fill(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      // 0 - Explorer (sur violet)
+                      _buildNavIcon(
+                        icon: items[0],
+                        index: 0,
+                        currentIndex: currentIndex,
+                        activeColorOnPurple: Colors.white,
+                        activeColorOnWhite: primary,
+                        inactiveColor: Colors.white.withOpacity(0.55),
+                        isOnPurpleBackground: true,
+                        onTap: () => _onTap(0),
+                      ),
+
+                      // 1 - Missions (sur blanc)
+                      _buildNavIcon(
+                        icon: items[1],
+                        index: 1,
+                        currentIndex: currentIndex,
+                        activeColorOnPurple: Colors.white,
+                        activeColorOnWhite: primary,
+                        inactiveColor: inactive,
+                        isOnPurpleBackground: false,
+                        onTap: () => _onTap(1),
+                      ),
+
+                      // 2 - Créer (central, jamais sélectionné)
+                      _buildCreateIcon(
+                        icon: items[2],
+                        onTap: _onCreateTap,
+                      ),
+
+                      // 3 - Messages
+                      _buildNavIcon(
+                        icon: items[3],
+                        index: 3,
+                        currentIndex: currentIndex,
+                        activeColorOnPurple: Colors.white,
+                        activeColorOnWhite: primary,
+                        inactiveColor: inactive,
+                        isOnPurpleBackground: false,
+                        onTap: () => _onTap(3),
+                      ),
+
+                      // 4 - Profil
+                      _buildNavIcon(
+                        icon: items[4],
+                        index: 4,
+                        currentIndex: currentIndex,
+                        activeColorOnPurple: Colors.white,
+                        activeColorOnWhite: primary,
+                        inactiveColor: inactive,
+                        isOnPurpleBackground: false,
+                        onTap: () => _onTap(4),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- Icône classique (sans texte) ---
+  Widget _buildNavIcon({
+    required IconData icon,
+    required int index,
+    required int currentIndex,
+    required Color activeColorOnPurple,
+    required Color activeColorOnWhite,
+    required Color inactiveColor,
+    required bool isOnPurpleBackground,
+    required VoidCallback onTap,
+  }) {
+    final bool selected = currentIndex == index;
+    final Color color;
+
+    if (!selected) {
+      color = inactiveColor;
+    } else {
+      color = isOnPurpleBackground ? activeColorOnPurple : activeColorOnWhite;
+    }
+
+    return InkWell(
+      onTap: onTap,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        child: AnimatedScale(
+          scale: selected ? 1.08 : 1.0,
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOut,
+          child: Icon(
+            icon,
+            size: selected ? 24 : 22,
+            color: color,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // --- Bouton central "Créer" ---
+  Widget _buildCreateIcon({
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    const primary = Color(0xFF6C63FF);
+    const primarySoft = Color(0xFF9381FF);
+
+    return InkWell(
+      onTap: onTap,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              colors: [primary, primarySoft],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: primary.withOpacity(0.35),
+                blurRadius: 12,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
+          child: Center(
+            child: Icon(
+              icon,
+              size: 22,
+              color: Colors.white,
             ),
           ),
         ),

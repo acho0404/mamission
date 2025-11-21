@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../app/router.dart';
+import '../app/theme.dart';
+
+// L'import pour les localisations (dictionnaire de Flutter)
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
@@ -48,12 +52,25 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp.router(
       title: 'MaMission',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF6C63FF),
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF8F6FF),
-      ),
+      theme: buildLightTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: ThemeMode.light,
+
       routerConfig: buildRouter(),
+
+      // --- DÉBUT DE LA SOLUTION B (CORRECTION DU CRASH CALENDRIER) ---
+      locale: const Locale('fr', 'FR'),
+      supportedLocales: const [
+        Locale('fr', 'FR'),
+        // Locale('en', 'US'), // Vous pouvez décommenter si vous voulez supporter l'anglais
+      ],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      // --- FIN DE LA SOLUTION B ---
+
       builder: (context, child) {
         return WillPopScope(
           onWillPop: () => _onWillPop(context),

@@ -10,6 +10,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations: # <-- AJOUTEZ CETTE LIGNE
+    sdk: flutter         # <-- AJOUTEZ CETTE LIGNE
 
 
   shared_preferences: ^2.2.3 # (ou la dernière version)
@@ -24,7 +26,7 @@ dependencies:
   flutter_animate: ^4.5.0 # <--- AJOUTEZ CETTE LIGNE
   geocoding: ^2.1.0
   google_place: ^0.4.7
-  intl: ^0.19.0
+  intl: 0.20.2
   google_fonts: ^4.0.4
 
 
@@ -45,6 +47,7 @@ dependencies:
   http: ^0.13.6
   freezed_annotation: ^2.4.4
   flutter_local_notifications: ^18.0.1
+  table_calendar: ^3.1.2 # <-- AJOUTEZ ÇA
 
 dev_dependencies:
   flutter_test:
@@ -55,6 +58,14 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icons/mission_marker.png
+    - assets/icons/mission_marker_halo.png
+    - assets/icons/user_marker_red.png
     - assets/images/
+    - assets/config/map_style.json
+    - assets/fonts/manrope/
+  fonts:
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/manrope/Manrope[wght].ttf
 
 

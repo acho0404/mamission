@@ -78,6 +78,7 @@ class StatusBadge extends StatelessWidget {
               'label': 'Terminée',
               'icon': Icons.check_circle_outline,
             };
+
           default:
             return {
               'bg': const Color(0xFFFFE4E4), // Rouge clair
@@ -113,6 +114,17 @@ class StatusBadge extends StatelessWidget {
               'label': 'Refusée',
               'icon': Icons.cancel_rounded,
             };
+
+          case 'countered':
+            return {
+              'bg': Colors.orange.shade50,
+              'text': Colors.orange.shade700,
+              'label': 'Contre-offre',
+              'icon': Icons.swap_horiz_rounded,
+            };
+
+
+
           default:
             return {
               'bg': const Color(0xFFDDE8FF), // Bleu clair

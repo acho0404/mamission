@@ -15,140 +15,251 @@ class CardOffer extends StatelessWidget {
     this.onTap,
   });
 
+  // Couleurs premium
+  static const Color _accentColor = Color(0xFF6C63FF);
+  static const Color _darkText = Color(0xFF1A1A1A);
+  static const Color _subText = Color(0xFF88889D);
+  static const Color _bgWhite = Colors.white;
+
   @override
   Widget build(BuildContext context) {
-    // --- Données de la mission ---
-    final missionTitle = missionData['title'] ?? 'Mission inconnue';
-    final missionLocation = missionData['location'] ?? '—';
-    final missionPhoto = missionData['photoUrl'];
-
-    // --- Données de l'offre ---
+    final title = missionData['title'] ?? 'Mission inconnue';
+    final location = missionData['location'] ?? '—';
+    final photo = missionData['photoUrl'];
     final offerPrice = offerData['price'] ?? 0;
     final offerStatus = offerData['status'] ?? 'pending';
 
-    // --- Couleur d'accent ---
-    const Color accentColor = Color(0xFF6C63FF);
+    // 🔥 SI OFFRE ANNULÉE → Design "Ghost" (Désactivé mais propre)
+    if (offerStatus == 'cancelled') {
+      return _buildCancelledCard(title);
+    }
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFE8E8E8), width: 1),
-        borderRadius: BorderRadius.circular(20),
+        color: _bgWhite,
+        borderRadius: BorderRadius.circular(24),
+        // Ombre subtile et colorée (Glow effect léger)
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
+            color: _accentColor.withOpacity(0.08),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
         child: InkWell(
+          borderRadius: BorderRadius.circular(24),
           onTap: onTap,
-          splashColor: accentColor.withOpacity(0.08),
-          highlightColor: accentColor.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(20),
+          splashColor: _accentColor.withOpacity(0.05),
+          highlightColor: _accentColor.withOpacity(0.02),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            padding: const EdgeInsets.all(18),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // --- Ligne haute : photo + titre + badge ---
+                // ----------------------- HEADER -----------------------
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: (missionPhoto != null &&
-                          '$missionPhoto'.isNotEmpty)
-                          ? Image.network(
-                        '$missionPhoto',
-                        width: 48,
-                        height: 48,
-                        fit: BoxFit.cover,
-                      )
-                          : Container(
-                        width: 48,
-                        height: 48,
+                    // PHOTO AVEC EFFET DE PROFONDEUR
+                    Hero(
+                      tag: 'mission_photo_${missionData['id'] ?? title}',
+                      child: Container(
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF1F1F1),
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(18),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                         ),
-                        child: const Icon(
-                          Icons.work_outline,
-                          color: Color(0xFFBDBDBD),
-                          size: 26,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(18),
+                          child: (photo != null && '$photo'.isNotEmpty)
+                              ? Image.network(
+                            '$photo',
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                          )
+                              : Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  Colors.grey.shade100,
+                                  Colors.grey.shade300
+                                ],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                            ),
+                            child: Icon(Icons.work_outline_rounded,
+                                color: Colors.grey.shade500, size: 28),
+                          ),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
 
-                    // Titre et localisation
+                    const SizedBox(width: 16),
+
+                    // INFO COLONNE
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            missionTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1A1A1A),
-                              fontSize: 16,
-                            ),
+                          // ROW: Title + Badge alignés intelligemment
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.3,
+                                    color: _darkText,
+                                    fontFamily: 'Plus Jakarta Sans', // Idée font
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 4),
-                          _buildInfoChip(
-                            icon: Icons.location_on_outlined,
-                            text: missionLocation,
+
+                          const SizedBox(height: 6),
+
+                          // LOCATION CHIP SIMPLIFIÉ
+                          Row(
+                            children: [
+                              Icon(Icons.location_on_rounded,
+                                  size: 14, color: _accentColor),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  location,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: _subText,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          // BADGE DÉPLACÉ ICI POUR L'ÉQUILIBRE
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Transform.scale(
+                              scale: 0.9,
+                              alignment: Alignment.centerLeft,
+                              child: StatusBadge(type: 'offer', status: offerStatus),
+                            ),
                           ),
                         ],
                       ),
                     ),
-
-                    const SizedBox(width: 8),
-
-                    // --- Badge de statut ---
-                    StatusBadge(type: 'offer', status: offerStatus),
                   ],
                 ),
 
+                const SizedBox(height: 20),
+
+                // LIGNE DE SÉPARATION SUBTILE
+                Divider(height: 1, color: Colors.grey.withOpacity(0.1)),
                 const SizedBox(height: 16),
 
-                // --- Bas : prix + bouton ---
+                // -------------------- BOTTOM ROW ----------------------
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
-                      "$offerPrice €",
-                      style: const TextStyle(
-                        color: Color(0xFF1A1A1A),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 20,
-                      ),
+                    // PRICE BLOCK
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Votre offre".toUpperCase(), // <--- On le fait ici
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: _subText.withOpacity(0.7),
+                            // plus de 'uppercase: true' ici
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        RichText(
+                          text: TextSpan(
+                            children: [
+                              TextSpan(
+                                text: "$offerPrice",
+                                style: const TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w800,
+                                  color: _darkText,
+                                  letterSpacing: -0.5,
+                                ),
+                              ),
+                              const TextSpan(
+                                text: " €",
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                  color: _accentColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
+
+                    const Spacer(),
+
+                    // ACTION BUTTON (Arrondi et moderne)
                     ElevatedButton(
                       onPressed: onTap,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: accentColor,
-                        foregroundColor: Colors.white,
+                        backgroundColor: const Color(0xFFF4F2FF), // Light Purple bg
+                        foregroundColor: _accentColor,
+                        elevation: 0,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(16),
                         ),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 10),
-                        elevation: 0,
+                            horizontal: 20, vertical: 14),
                       ),
-                      child: const Text(
-                        "Voir détails",
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Text(
+                            "Détails",
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          SizedBox(width: 6),
+                          Icon(Icons.arrow_forward_rounded, size: 16),
+                        ],
                       ),
                     ),
                   ],
@@ -161,26 +272,53 @@ class CardOffer extends StatelessWidget {
     );
   }
 
-  // --- Chip info mission ---
-  // --- Chip d'information (harmonisé avec CardMission) ---
-  Widget _buildInfoChip({required IconData icon, required String text}) {
+  // ----------------------- CARD ANNULÉE (GHOST) -------------------------
+  Widget _buildCancelledCard(String title) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0F0F0), // ✅ même fond que CardMission
-        borderRadius: BorderRadius.circular(8),
+        color: const Color(0xFFFAFAFA), // Gris très clair
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFEEEEEE)),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: const Color(0xFF5E5E6D)),
-          const SizedBox(width: 6),
-          Text(
-            text,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF4A4A4A),
-              fontWeight: FontWeight.w500,
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFEBEE), // Rouge très pâle
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.close_rounded,
+                color: Color(0xFFE57373), size: 20),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade400, // Texte "off"
+                    decoration: TextDecoration.lineThrough, // Barré
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  "Offre annulée",
+                  style: TextStyle(
+                    color: Color(0xFFE57373),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

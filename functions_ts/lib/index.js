@@ -1,52 +1,31 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.stripeWebhook = exports.createPaymentIntent = void 0;
-const functions = require("firebase-functions/v2");
-const https_1 = require("firebase-functions/v2/https");
+exports.autoCloseMission = void 0;
+const firestore_1 = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
-const stripe_1 = require("stripe");
 admin.initializeApp();
-const stripe = new stripe_1.default(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: "2024-06-20",
-});
-// createPaymentIntent callable
-exports.createPaymentIntent = (0, https_1.onCall)({ region: "us-central1", memory: "512MiB", timeoutSeconds: 60 }, async (request) => {
-    const amount = Number(request.data.amount);
-    const currency = (request.data.currency || "eur").toString();
-    const description = (request.data.description || "Mission payment").toString();
-    if (!amount || amount <= 0) {
-        throw new functions.https.HttpsError("invalid-argument", "Montant invalide");
-    }
-    const intent = await stripe.paymentIntents.create({
-        amount,
-        currency,
-        description,
-        automatic_payment_methods: { enabled: true },
-    });
-    return { clientSecret: intent.client_secret };
-});
-// stripeWebhook
-exports.stripeWebhook = (0, https_1.onRequest)({ region: "us-central1", memory: "512MiB", timeoutSeconds: 60 }, async (req, res) => {
-    const sig = req.headers["stripe-signature"];
-    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    let event;
-    try {
-        event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
-    }
-    catch (err) {
-        console.error("⚠️ Signature Stripe invalide :", err.message);
-        res.status(400).send(`Webhook Error: ${err.message}`);
+// 🔥 V2 — Fermeture automatique d'une mission si 2 avis
+exports.autoCloseMission = (0, firestore_1.onDocumentCreated)("reviews/{id}", async (event) => {
+    const snap = event.data;
+    if (!snap)
         return;
+    const data = snap.data();
+    const missionId = data.missionId;
+    if (!missionId)
+        return;
+    // 1. Récupérer tous les avis associés à cette mission
+    const reviewsSnap = await admin.firestore()
+        .collection("reviews")
+        .where("missionId", "==", missionId)
+        .get();
+    // 2. Si 2 avis → clôture automatique
+    if (reviewsSnap.size >= 2) {
+        await admin.firestore()
+            .collection("missions")
+            .doc(missionId)
+            .update({
+            status: "closed",
+            closedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
     }
-    switch (event.type) {
-        case "payment_intent.succeeded":
-            console.log("✅ Paiement réussi :", event.data.object["id"]);
-            break;
-        case "payment_intent.payment_failed":
-            console.log("❌ Paiement échoué :", event.data.object["id"]);
-            break;
-        default:
-            console.log("ℹ️ Événement Stripe :", event.type);
-    }
-    res.json({ received: true });
 });

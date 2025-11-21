@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -45,6 +46,7 @@ class ThreadsPage extends StatelessWidget {
     Map<String, dynamic>.from(chat['userNames'] ?? {});
     final Map<String, dynamic> userPhotos =
     Map<String, dynamic>.from(chat['userPhotos'] ?? {});
+
     final batch = FirebaseFirestore.instance.batch();
 
     for (final uid in users) {
@@ -59,29 +61,57 @@ class ThreadsPage extends StatelessWidget {
       if (needNames) 'userNames': userNames,
       if (needPhotos) 'userPhotos': userPhotos,
     }, SetOptions(merge: true));
+
     await batch.commit();
   }
+
+  // -----------------------------------------------------------
+  // 🔥 APPBAR PREMIUM GLASS BLUR (ADAPTÉ POUR TA PAGE)
+  // -----------------------------------------------------------
+  // -----------------------------------------------------------
+// 🔥 APPBAR PREMIUM ULTRA (VERSION 2025 MA MISSION)
+// -----------------------------------------------------------
+  PreferredSizeWidget buildPremiumGlassAppBar() {
+    return AppBar(
+      backgroundColor: const Color(0xFF6C63FF), // violet MaMission unifié
+      elevation: 0,
+      centerTitle: true,
+      title: const Text(
+        "Messages",
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          letterSpacing: -0.2,
+        ),
+      ),
+      toolbarHeight: 70, // hauteur Airbnb
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(18),
+          bottomRight: Radius.circular(18),
+        ),
+      ),
+    );
+  }
+
+
+  // -----------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     final me = FirebaseAuth.instance.currentUser!;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8F6FF),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF6C63FF),
-        elevation: 2,
-        centerTitle: true,
-        title: const Text(
-          "Messages",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-        ),
-      ),
+      appBar: buildPremiumGlassAppBar(), // 🔥 Ici : nouvelle AppBar premium
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _threadsStream(me.uid),
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
             return const Center(
-                child: CircularProgressIndicator(color: Color(0xFF6C63FF)));
+              child: CircularProgressIndicator(color: Color(0xFF6C63FF)),
+            );
           }
 
           final docs = snap.data?.docs ?? [];
@@ -102,24 +132,32 @@ class ThreadsPage extends StatelessWidget {
               final doc = docs[i];
               final chat = doc.data();
               final chatRef = doc.reference;
+
               _ensureChatMetadata(chatRef, chat);
 
               final List users = List<String>.from(chat['users'] ?? const []);
               final otherId =
               users.firstWhere((id) => id != me.uid, orElse: () => '');
+
               if (otherId.isEmpty) return const SizedBox.shrink();
 
               final Map names =
               Map<String, dynamic>.from(chat['userNames'] ?? {});
               final Map photos =
               Map<String, dynamic>.from(chat['userPhotos'] ?? {});
-              final String name = (names[otherId] ?? 'Utilisateur').toString();
+
+              final String name =
+              (names[otherId] ?? 'Utilisateur').toString();
               final String photo = (photos[otherId] ?? '').toString();
 
-              final String lastMsg = (chat['lastMessage'] ?? '').toString();
-              final String lastFrom = (chat['lastMessageFrom'] ?? '').toString();
+              final String lastMsg =
+              (chat['lastMessage'] ?? '').toString();
+              final String lastFrom =
+              (chat['lastMessageFrom'] ?? '').toString();
+
               final Timestamp? ts = chat['lastMessageAt'] as Timestamp?;
-              final String time = ts != null ? _formatTime(ts.toDate()) : '';
+              final String time =
+              ts != null ? _formatTime(ts.toDate()) : '';
 
               final preview = lastMsg.isEmpty
                   ? "(Aucun message)"
@@ -128,14 +166,13 @@ class ThreadsPage extends StatelessWidget {
               final List readBy = (chat['readBy'] ?? []) as List;
               final bool isUnread = !readBy.contains(me.uid);
 
-              // 🔹 Widget principal : écoute du statut utilisateur
               return StreamBuilder<Map<String, dynamic>>(
                 stream: _userPresence(otherId),
                 builder: (context, statusSnap) {
                   final presence = statusSnap.data ?? {};
                   final bool isOnline = presence['isOnline'] ?? false;
                   final DateTime? lastSeen = presence['lastSeen'];
-                  final String statusText = _statusText(isOnline, lastSeen);
+                  final statusText = _statusText(isOnline, lastSeen);
 
                   return InkWell(
                     borderRadius: BorderRadius.circular(16),
@@ -165,7 +202,6 @@ class ThreadsPage extends StatelessWidget {
                       ),
                       child: Row(
                         children: [
-                          // avatar + point vert
                           Stack(
                             children: [
                               CircleAvatar(
@@ -185,9 +221,7 @@ class ThreadsPage extends StatelessWidget {
                                   width: 10,
                                   height: 10,
                                   decoration: BoxDecoration(
-                                    color: isOnline
-                                        ? Colors.green
-                                        : Colors.grey,
+                                    color: isOnline ? Colors.green : Colors.grey,
                                     border: Border.all(
                                         color: Colors.white, width: 1.5),
                                     shape: BoxShape.circle,
@@ -196,8 +230,9 @@ class ThreadsPage extends StatelessWidget {
                               ),
                             ],
                           ),
+
                           const SizedBox(width: 12),
-                          // infos
+
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -225,27 +260,25 @@ class ThreadsPage extends StatelessWidget {
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 2),
 
                                 const SizedBox(height: 3),
 
-
-// 🔹 Dernier message
                                 Text(
-                                  preview,
+                                  preview, // <--- ON A REMIS "preview"
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                    color: const Color(0xFF5E5E6D),
+                                    color: const Color(0xFF5E5E6D), // Style d'origine
                                     fontSize: 13,
-                                    fontWeight: isUnread ? FontWeight.w600 : FontWeight.normal,
+                                    fontWeight: isUnread // On remet le style "gras" si non lu
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
                                   ),
                                 ),
-
                               ],
                             ),
                           ),
-                          const SizedBox(width: 8),
+
                           if (isUnread)
                             Container(
                               padding: const EdgeInsets.all(6),
@@ -269,24 +302,74 @@ class ThreadsPage extends StatelessWidget {
   }
 
   /// 🔹 Format heure JJ/MM ou HH:mm
+  /// 🔹 Format heure (MODIFIÉ POUR JOUR + HEURE)
   static String _formatTime(DateTime date) {
     final now = DateTime.now();
-    if (now.difference(date).inDays == 0) {
-      return "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
+
+    // On crée des dates "pures" (sans les heures/minutes) pour comparer les jours
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final msgDate = DateTime(date.year, date.month, date.day);
+
+    // Formatage de l'heure (HH:mm)
+    final h = date.hour.toString().padLeft(2, '0');
+    final m = date.minute.toString().padLeft(2, '0');
+    final timeStr = "$h:$m";
+
+    if (msgDate == today) {
+      // 1. AUJOURD'HUI
+      // Affiche seulement l'heure
+      // Résultat : "14:30"
+      return timeStr;
+
+    } else if (msgDate == yesterday) {
+      // 2. HIER
+      // Affiche "Hier" + l'heure
+      // Résultat : "Hier, 14:30"
+      return "Hier, $timeStr";
+
+    } else {
+      // 3. AUTRES JOURS
+      // Affiche la date + l'heure
+      // Résultat : "14/11, 14:30"
+      final d = date.day.toString().padLeft(2, '0');
+      final mo = date.month.toString().padLeft(2, '0');
+      return "$d/$mo, $timeStr";
     }
-    return "${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}";
   }
 
-  /// 🔹 Format texte de statut
+  /// 🔹 Format texte du statut
+  /// 🔹 Format texte du statut (Style WhatsApp)
+  /// 🔹 Format texte du statut (Style WhatsApp - SANS HEURE)
+  /// 🔹 Format texte du statut (Style WhatsApp - SANS HEURE)
   static String _statusText(bool isOnline, DateTime? lastSeen) {
     if (isOnline) return "En ligne";
     if (lastSeen == null) return "Hors ligne";
-    final diff = DateTime.now().difference(lastSeen);
-    if (diff.inMinutes < 5) return "Vu récemment";
-    if (diff.inHours < 1) return "Vu il y a ${diff.inMinutes} min";
-    if (diff.inHours < 24) {
-      return "Vu à ${lastSeen.hour.toString().padLeft(2, '0')}:${lastSeen.minute.toString().padLeft(2, '0')}";
+
+    // --- Logique de date (today, yesterday) ---
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final lastSeenDate = DateTime(lastSeen.year, lastSeen.month, lastSeen.day);
+
+    if (lastSeenDate == today) {
+      // 1. AUJOURD'HUI
+      // Résultat : "Vu aujourd'hui"
+      return "Vu aujourd'hui";
+
+    } else if (lastSeenDate == yesterday) {
+      // 2. HIER
+      // Résultat : "Vu hier"
+      return "Vu hier";
+
+    } else {
+      // 3. AUTRES JOURS
+      // Résultat : "Vu le 14/11"
+      final d = lastSeen.day.toString().padLeft(2, '0');
+      final mo = lastSeen.month.toString().padLeft(2, '0');
+      return "Vu le $d/$mo";
     }
-    return "Vu le ${lastSeen.day}/${lastSeen.month}";
   }
 }
+
+
