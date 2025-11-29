@@ -14,8 +14,22 @@ import 'package:mamission/core/formatters.dart';
 import 'package:mamission/features/missions/mission_detail/widgets/mission_questions_section.dart';
 import 'package:mamission/features/missions/mission_detail/widgets/photo_grid_section.dart';
 
-// ✅ Import du nouveau service robuste
+// ✅ Import du service de notif
 import 'package:mamission/shared/services/notification_service.dart';
+
+// ---------------------------------------------------------------------------
+// Dégradé de fond néon pour la page
+// ---------------------------------------------------------------------------
+const LinearGradient _detailBackgroundGradient = LinearGradient(
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
+  colors: [
+    Color(0xFFEEF0FF),
+    Color(0xFFE7F5FF),
+    Color(0xFFF9FBFF),
+  ],
+);
+
 // =========================================================================
 // CLASSE PRINCIPALE (MissionDetailPage)
 // =========================================================================
@@ -75,23 +89,31 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     return query.docs.isNotEmpty;
   }
 
+  // Pastille noire "X offres"
   Widget _offerCountChip(int count) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFF4F4F6),
-        borderRadius: BorderRadius.circular(10),
+        color: Colors.black.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.people, size: 14, color: Color(0xFF8E8E93)),
+          const Icon(Icons.local_offer, size: 14, color: Colors.white),
           const SizedBox(width: 6),
           Text(
             "$count offre${count > 1 ? 's' : ''}",
             style: const TextStyle(
               fontSize: 12.5,
-              color: Color(0xFF8E8E93),
+              color: Colors.white,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -131,10 +153,13 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
       if (userDoc.exists && mounted) setState(() => poster = userDoc.data());
     }
 
+    // NOUVEAU
     final status = (m['status'] ?? 'open').toString();
     final assignedToId = (m['assignedTo'] as String?) ?? '';
 
-    if (status == 'in_progress' && assignedToId.isNotEmpty) {
+    // 🔹 On garde le prestataire visible en "en cours", "terminée" ET "clôturée"
+    if ((status == 'in_progress' || status == 'done' || status == 'closed') &&
+        assignedToId.isNotEmpty) {
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(assignedToId)
@@ -152,16 +177,27 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
           .doc(widget.missionId)
           .collection('offers')
           .where('userId', isEqualTo: currentUser.uid)
-          .limit(1)
           .get();
 
       if (mounted) {
-        if (existing.docs.isNotEmpty) {
-          final docOffer = existing.docs.first;
+        Map<String, dynamic>? activeOfferData;
+        String? activeOfferId;
+
+        for (final docOffer in existing.docs) {
+          final data = docOffer.data() as Map<String, dynamic>;
+          final st = (data['status'] ?? 'pending').toString();
+          if (st != 'cancelled' && st != 'closed') {
+            activeOfferId = docOffer.id;
+            activeOfferData = data;
+            break;
+          }
+        }
+
+        if (activeOfferId != null && activeOfferData != null) {
           setState(() {
             _hasMadeOffer = true;
-            _myOfferId = docOffer.id;
-            _myOfferData = docOffer.data() as Map<String, dynamic>;
+            _myOfferId = activeOfferId;
+            _myOfferData = activeOfferData;
           });
         } else {
           setState(() {
@@ -172,6 +208,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         }
       }
     }
+
     _questionsStream = FirebaseFirestore.instance
         .collection('missions')
         .doc(widget.missionId)
@@ -193,53 +230,65 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
       backgroundColor: Colors.transparent,
       builder: (context) {
         return Padding(
-          padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom),
+          padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Faire une offre',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-
-                const SizedBox(height: 12),
-
+                Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Faire une offre',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 16),
                 TextField(
                   controller: priceCtrl,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: "Votre prix (€)",
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.euro_symbol),
+                    prefixIcon: const Icon(Icons.euro_symbol),
+                    filled: true,
+                    fillColor: const Color(0xFFF3F3FA),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                   keyboardType: TextInputType.number,
                 ),
-
                 const SizedBox(height: 12),
-
                 TextField(
                   controller: msgCtrl,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: "Ajouter un message (optionnel)",
-                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: const Color(0xFFF3F3FA),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                   maxLines: 3,
                 ),
-
-                const SizedBox(height: 12),
-
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.add_circle_outline),
-                  label: const Text("Envoyer l'offre"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kPrimary,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size.fromHeight(45),
-                  ),
+                const SizedBox(height: 16),
+                _buildPrimaryButton(
+                  context,
                   onPressed: () async {
                     final user = FirebaseAuth.instance.currentUser;
                     if (user == null) return;
@@ -262,13 +311,13 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                         .doc(widget.missionId)
                         .collection('offers');
 
-                    // 🔥 Vérifier si une offre existe déjà
+                    // Vérifier si une offre existe déjà
                     final existing = await offersRef
                         .where('userId', isEqualTo: user.uid)
                         .limit(1)
                         .get();
 
-                    // 🔥 Si offre existe → on la met à jour
+                    // Si offre existe → update
                     if (existing.docs.isNotEmpty) {
                       final doc = existing.docs.first;
 
@@ -280,7 +329,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                         'cancelledAt': FieldValue.delete(),
                       });
 
-                      // ✅ NOTIF ROBUSTE : Mise à jour offre
                       await NotificationService.notifyOfferEdited(
                         clientUserId: mission?['posterId'] ?? '',
                         missionId: widget.missionId,
@@ -295,11 +343,10 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                       return;
                     }
 
-                    // 🔥 Sinon → nouvelle offre
+                    // Sinon → nouvelle offre
                     final newOffer = offersRef.doc();
 
                     await newOffer.set({
-
                       'id': newOffer.id,
                       'userId': user.uid,
                       'userName': userData['name'] ?? 'Utilisateur',
@@ -316,8 +363,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                       'offersCount': FieldValue.increment(1),
                     });
 
-
-                    // ✅ NOTIF ROBUSTE : Nouvelle offre
                     await NotificationService.notifyNewOffer(
                       clientUserId: mission?['posterId'] ?? '',
                       missionId: widget.missionId,
@@ -331,6 +376,8 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                       await _loadMission();
                     }
                   },
+                  icon: Icons.add_circle_outline,
+                  label: "Envoyer l'offre",
                 ),
               ],
             ),
@@ -346,14 +393,15 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     final raw = mission['duration'];
     if (raw == null) return "Flexible";
 
-    final hours = (raw is num) ? raw.toDouble() : double.tryParse(raw.toString());
+    final hours =
+    (raw is num) ? raw.toDouble() : double.tryParse(raw.toString());
     if (hours == null || hours <= 0) return "Flexible";
 
     return "${hours.toString().replaceAll('.0', '')} h";
   }
 
   // --------------------------------------------------------------------------
-  // OFFRE : modifier (tant que mission = open)
+  // OFFRE : modifier
   // --------------------------------------------------------------------------
   Future<void> _onEditOfferPressed() async {
     if (_myOfferId == null || _myOfferData == null) return;
@@ -375,46 +423,59 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
             bottom: MediaQuery.of(context).viewInsets.bottom,
           ),
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(20),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+                const SizedBox(height: 16),
                 const Text(
                   'Modifier mon offre',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 TextField(
                   controller: priceCtrl,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: "Votre prix (€)",
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.euro_symbol),
+                    prefixIcon: const Icon(Icons.euro_symbol),
+                    filled: true,
+                    fillColor: const Color(0xFFF3F3FA),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                   keyboardType: TextInputType.number,
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: msgCtrl,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: "Modifier le message (optionnel)",
-                    border: OutlineInputBorder(),
+                    filled: true,
+                    fillColor: const Color(0xFFF3F3FA),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                   maxLines: 3,
                 ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.save_outlined),
-                  label: const Text("Enregistrer les modifications"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kPrimary,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size.fromHeight(45),
-                  ),
+                const SizedBox(height: 16),
+                _buildPrimaryButton(
+                  context,
                   onPressed: () async {
                     final user = FirebaseAuth.instance.currentUser;
                     if (user == null) return;
@@ -442,7 +503,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                       'updatedAt': FieldValue.serverTimestamp(),
                     });
 
-                    // ✅ NOTIF ROBUSTE : Modification
                     await NotificationService.notifyOfferEdited(
                       clientUserId: mission?['posterId'] ?? '',
                       missionId: widget.missionId,
@@ -461,6 +521,8 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                       );
                     }
                   },
+                  icon: Icons.save_outlined,
+                  label: "Enregistrer les modifications",
                 ),
               ],
             ),
@@ -471,7 +533,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   }
 
   // --------------------------------------------------------------------------
-  // OFFRE : retirer (tant que mission = open)
+  // OFFRE : retirer
   // --------------------------------------------------------------------------
   Future<void> _onWithdrawOfferPressed() async {
     if (_myOfferId == null) return;
@@ -572,17 +634,15 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
           .collection('missions')
           .doc(widget.missionId);
 
-      // supprime l'offre
       await missionRef.collection('offers').doc(_myOfferId).update({
         'status': 'cancelled',
         'cancelledAt': FieldValue.serverTimestamp(),
       });
 
       await missionRef.update({
-        'offersCount': FieldValue.increment(-1), // on retire du compteur actif
+        'offersCount': FieldValue.increment(-1),
       });
 
-      // ✅ NOTIF ROBUSTE : Retrait offre
       final userData = (await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
@@ -660,14 +720,23 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
           bottom: MediaQuery.of(context).viewInsets.bottom,
         ),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              const SizedBox(height: 16),
               const Text(
                 "Répondre à la question",
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
@@ -675,21 +744,20 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
               const SizedBox(height: 12),
               TextField(
                 controller: ctrl,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: "Écris ta réponse...",
-                  border: OutlineInputBorder(),
+                  filled: true,
+                  fillColor: const Color(0xFFF3F3FA),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
                 maxLines: 3,
               ),
-              const SizedBox(height: 12),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.send),
-                label: const Text("Publier la réponse"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kPrimary,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size.fromHeight(45),
-                ),
+              const SizedBox(height: 16),
+              _buildPrimaryButton(
+                context,
                 onPressed: () async {
                   final txt = ctrl.text.trim();
                   if (txt.isEmpty) return;
@@ -719,6 +787,8 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
 
                   if (context.mounted) Navigator.pop(context);
                 },
+                icon: Icons.send,
+                label: "Publier la réponse",
               ),
             ],
           ),
@@ -730,90 +800,117 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   // --------------------------------------------------------------------------
   // CHAT
   // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // CHAT
+  // --------------------------------------------------------------------------
   Future<void> _handleOpenChat() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null || mission == null) return;
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null || mission == null) return;
 
     final String missionId = widget.missionId;
-    final String posterId = mission?['posterId'] ?? '';
-    final String assignedToId = mission?['assignedTo'] ?? '';
+    final String posterId = (mission?['posterId'] ?? '').toString();
+    final String assignedToId = (mission?['assignedTo'] ?? '').toString();
 
-    // 🔥 Détermine correctement l'autre utilisateur
-    final bool iAmOwner = user.uid == posterId;
-    final String otherUserId = iAmOwner ? assignedToId : posterId;
-
-    if (otherUserId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Erreur: destinataire introuvable.")),
-      );
-      return;
-    }
-
-    // --- Vérifie si un chat EXISTE déjà entre les deux utilisateurs pour cette mission
-    final chatQuery = await FirebaseFirestore.instance
-        .collection('chats')
-        .where('missionId', isEqualTo: missionId)
-        .where('participants', arrayContains: user.uid)
-        .get();
-
-    String? existingChatId;
-    for (final doc in chatQuery.docs) {
-      final data = doc.data();
-      final participants = List<String>.from(data['participants'] ?? []);
-      if (participants.contains(otherUserId)) {
-        existingChatId = doc.id;
-        break;
+    if (posterId.isEmpty || assignedToId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Erreur : prestataire introuvable.")),
+        );
       }
-    }
-
-    // Si trouvé → ouvrir
-    if (existingChatId != null) {
-      if (mounted) context.push('/chat/$existingChatId');
       return;
     }
 
-    // --- Sinon → créer le nouveau chat proprement
-    final myData = (await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get())
-        .data() ??
-        {};
+    final ids = <String>[missionId, posterId, assignedToId]..sort();
+    final String chatId = ids.join('_');
 
-    final otherData = (await FirebaseFirestore.instance
-        .collection('users')
-        .doc(otherUserId)
-        .get())
-        .data() ??
-        {};
+    final chatRef = FirebaseFirestore.instance.collection('chats').doc(chatId);
+    final snap = await chatRef.get();
 
-    final newChat = await FirebaseFirestore.instance.collection('chats').add({
-      'missionId': missionId,
-      'participants': [user.uid, otherUserId],
-      'participantsInfo': {
-        user.uid: {
-          'name': myData['name'] ?? 'Moi',
-          'photoUrl': myData['photoUrl'] ?? '',
-        },
-        otherUserId: {
-          'name': otherData['name'] ?? 'Utilisateur',
-          'photoUrl': otherData['photoUrl'] ?? '',
-        },
-      },
-      'lastMessage': '',
-      'lastSenderId': '',
-      'status': 'active',
-      'typing': {
-        user.uid: false,
-        otherUserId: false,
-      },
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
+    if (!snap.exists) {
+      final posterDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(posterId)
+          .get();
+      final workerDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(assignedToId)
+          .get();
 
-    if (mounted) context.push('/chat/${newChat.id}');
+      final posterData = posterDoc.data() ?? {};
+      final workerData = workerDoc.data() ?? {};
+
+      final posterName = (posterData['name'] ?? 'Client') as String;
+      final posterPhoto = (posterData['photoUrl'] ?? '') as String;
+
+      final workerName = (workerData['name'] ?? 'Prestataire') as String;
+      final workerPhoto = (workerData['photoUrl'] ?? '') as String;
+
+      if (!snap.exists) {
+        final posterDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(posterId)
+            .get();
+        final workerDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(assignedToId)
+            .get();
+
+        final posterData = posterDoc.data() ?? {};
+        final workerData = workerDoc.data() ?? {};
+
+        final posterName = (posterData['name'] ?? 'Client') as String;
+        final posterPhoto = (posterData['photoUrl'] ?? '') as String;
+
+        final workerName = (workerData['name'] ?? 'Prestataire') as String;
+        final workerPhoto = (workerData['photoUrl'] ?? '') as String;
+
+        await chatRef.set({
+          'missionId': missionId,
+          'users': [posterId, assignedToId],
+          'userNames': {
+            posterId: posterName,
+            assignedToId: workerName,
+          },
+          'userPhotos': {
+            posterId: posterPhoto,
+            assignedToId: workerPhoto,
+          },
+          'typing': {
+            posterId: false,
+            assignedToId: false,
+          },
+          'readBy': <String>[],
+          'lastMessage': '',
+          'lastMessageAt': FieldValue.serverTimestamp(),
+          'lastMessageFrom': '',
+          'participants': [posterId, assignedToId],
+          'participantsInfo': {
+            posterId: {'name': posterName, 'photoUrl': posterPhoto},
+            assignedToId: {'name': workerName, 'photoUrl': workerPhoto},
+          },
+
+          // 👇👇 IMPORTANT POUR L’ONGLET BOÎTE DE RÉCEPTION
+          'missionStatus': 'in_progress',
+          'missionTitle': mission?['title'] ?? '',
+          'missionPrice': mission?['budget'] ?? 0,
+
+          'status': 'active',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+    }
+
+    if (mounted) {
+      context.push('/chat/$chatId');
+    }
   }
 
+
+  // =========================================================================
+  // LOGIQUE D'ANNULATION MISSION
+  // =========================================================================
 
   // =========================================================================
   // LOGIQUE D'ANNULATION MISSION
@@ -823,51 +920,57 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    // Fonction interne qui exécute la logique lourde après confirmation
     Future<void> _performCancelLogic() async {
       try {
         final missionRef = FirebaseFirestore.instance
             .collection('missions')
             .doc(widget.missionId);
 
-        // --- 1. BATCH UPDATE (Mission + Offres) ---
         final batch = FirebaseFirestore.instance.batch();
 
-        // A. Annuler la Mission
         batch.update(missionRef, {
           'status': 'cancelled',
           'assignedTo': null,
           'cancelledAt': FieldValue.serverTimestamp(),
-          'cancelledBy': user.uid, // Utile pour savoir qui a annulé
+          'cancelledBy': user.uid,
         });
 
-        // B. Annuler toutes les Offres associées
         final offersSnap = await missionRef.collection('offers').get();
         for (final doc in offersSnap.docs) {
-          // On passe tout en 'cancelled', peu importe l'état d'avant
           batch.update(doc.reference, {
             'status': 'cancelled',
             'cancelledAt': FieldValue.serverTimestamp(),
           });
         }
 
-        // C. Valider les changements en base
         await batch.commit();
 
+        // 🔹 synchro statut mission côté chat
+        final posterId = (mission?['posterId'] ?? '').toString();
+        final assignedToId = (mission?['assignedTo'] ?? '').toString();
 
-        // --- 2. NOTIFICATIONS ---
+        if (posterId.isNotEmpty && assignedToId.isNotEmpty) {
+          final ids = <String>[widget.missionId, posterId, assignedToId]..sort();
+          final chatId = ids.join('_');
+
+          await FirebaseFirestore.instance
+              .collection('chats')
+              .doc(chatId)
+              .set(
+            {
+              'missionStatus': 'cancelled',
+            },
+            SetOptions(merge: true),
+          );
+        }
 
         if (isOwner) {
-          // CAS 1 : Le CLIENT annule
-          // On utilise la méthode du service qui prévient le prestataire assigné + les autres
           await NotificationService.notifyMissionCancelledByClient(
             missionId: widget.missionId,
             missionTitle: mission?['title'] ?? 'Mission',
             assignedProviderId: mission?['assignedTo'],
           );
         } else {
-          // CAS 2 : Le PRESTATAIRE se désiste (Annule sa participation)
-          // On récupère le nom du presta pour la notif
           final userData = (await FirebaseFirestore.instance
               .collection('users')
               .doc(user.uid)
@@ -881,7 +984,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
             providerName: userData?['name'] ?? 'Le prestataire',
           );
         }
-
       } catch (e) {
         debugPrint("Erreur lors de l'annulation : $e");
         if (mounted) {
@@ -895,7 +997,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
 
     if (mission == null) return;
 
-    // --- 3. BOITE DE DIALOGUE DE CONFIRMATION ---
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: false,
@@ -977,7 +1078,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
       },
     );
 
-    // --- 4. EXÉCUTION ---
     if (confirmed == true) {
       await _performCancelLogic();
       if (mounted) {
@@ -989,6 +1089,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
       }
     }
   }
+
 
   Future<void> _confirmEditMission() async {
     final confirmed = await showModalBottomSheet<bool>(
@@ -1240,11 +1341,11 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     }
   }
 
-
-
-
   // --------------------------------------------------------------------------
-  // MARQUER COMME TERMINÉE (CLIENT UNIQUEMENT)
+  // MARQUER COMME TERMINÉE
+  // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // MARQUER COMME TERMINÉE
   // --------------------------------------------------------------------------
   Future<void> _handleMarkAsDone() async {
     if (!mounted || mission == null) return;
@@ -1344,10 +1445,26 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
       'doneAt': FieldValue.serverTimestamp(),
     });
 
-    final assignedToId = (mission?['assignedTo'] ?? '') as String? ?? '';
+    // 🔹 synchro statut mission côté chat
+    final posterId = (mission?['posterId'] ?? '').toString();
+    final assignedToId = (mission?['assignedTo'] ?? '').toString();
+
+    if (posterId.isNotEmpty && assignedToId.isNotEmpty) {
+      final ids = <String>[widget.missionId, posterId, assignedToId]..sort();
+      final chatId = ids.join('_');
+
+      await FirebaseFirestore.instance
+          .collection('chats')
+          .doc(chatId)
+          .set(
+        {
+          'missionStatus': 'done',
+        },
+        SetOptions(merge: true),
+      );
+    }
 
     if (assignedToId.isNotEmpty) {
-      // ✅ NOTIF ROBUSTE : Mission terminée
       await NotificationService.notifyMissionMarkedDone(
         providerUserId: assignedToId,
         missionId: widget.missionId,
@@ -1366,8 +1483,9 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     }
   }
 
+
   // =========================================================================
-  // MÉTHODE BUILD (Reste inchangée, affichage seulement)
+  // MÉTHODE BUILD (UI ONLY)
   // =========================================================================
 
   String _formatDurationLabel(dynamic raw) {
@@ -1383,18 +1501,28 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     return "Durée non précisée";
   }
 
-
   @override
   Widget build(BuildContext context) {
     if (mission == null) {
       return Scaffold(
-        backgroundColor: kBackground,
-        appBar: AppBar(backgroundColor: kPrimary),
-        body: const Center(child: CircularProgressIndicator(color: kPrimary)),
+        backgroundColor: Colors.transparent,
+        appBar: buildAppleMissionAppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
+            onPressed: () => Navigator.pop(context),
+          ),
+          title: "Détails de la mission",
+        ),
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: _detailBackgroundGradient,
+          ),
+          child:
+          const Center(child: CircularProgressIndicator(color: kPrimary)),
+        ),
       );
     }
 
-    // --- Extraction des données ---
     final title = (mission?['title'] ?? '').toString();
     final desc = (mission?['description'] ?? '').toString();
     final budget = (mission?['budget'] ?? 0).toDouble();
@@ -1417,14 +1545,15 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     final flexibility = (mission?['flexibility'] ?? 'Flexible').toString();
     final status = (mission?['status'] ?? 'open').toString();
 
-    // 🔹 Catégorie + durée depuis Firestore
-    final categoryLabel =
-    (mission?['categoryLabel'] ?? mission?['category'] ?? 'Catégorie non précisée')
+    final categoryLabel = (mission?['categoryLabel'] ??
+        mission?['category'] ??
+        'Catégorie non précisée')
         .toString();
 
+    final offersCount = (mission?['offersCount'] ?? 0) as int;
 
     return Scaffold(
-      backgroundColor: kBackground,
+      backgroundColor: Colors.transparent,
       appBar: buildAppleMissionAppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
@@ -1432,342 +1561,317 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         ),
         title: "Détails de la mission",
       ),
-
-      body: SingleChildScrollView(
-        controller: _scrollController,
-        child: Column(
-          children: [
-            Container(
-              color: kCard,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // --- Titre & Budget ---
-                  Padding(
-                    padding:
-                    const EdgeInsets.fromLTRB(20, 24, 20, 20),
-                    child: Row(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: _detailBackgroundGradient,
+        ),
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          child: Column(
+            children: [
+              // ----------------------------------------------------------------
+              // CARD PRINCIPALE
+              // ----------------------------------------------------------------
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.92),
+                  borderRadius: BorderRadius.circular(26),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.06),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Titre + Prix
+                    Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
                           child: Text(
                             title,
                             style: const TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w700,
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
                               color: Color(0xFF2F2E41),
                               height: 1.3,
                             ),
                           ),
                         ),
                         const SizedBox(width: 16),
-                        Text(
-                          "${budget.toStringAsFixed(0)} €",
-                          style: const TextStyle(
-                            color: kPrimary,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 26,
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEEF0FF),
+                            borderRadius: BorderRadius.circular(18),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(20, 0, 20, 16),
-                    child: Divider(thickness: 0.5),
-                  ),
-
-                  // --- Chips d'infos ---
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        // ⬅️ Colonne chips (gauche)
-                        Expanded(
-                          flex: 2,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _chip(Icons.location_on, mode),
-                              const SizedBox(height: 8),
-
-                              _chip(Icons.calendar_month, 'Avant le $deadline'),
-                              const SizedBox(height: 8),
-
-                              _chip(Icons.access_time, flexibility),
-                              const SizedBox(height: 8),
-
-                              _chip(Icons.timer, _formatDurationHours(mission)),
-                              const SizedBox(height: 8),
-
-                              _chip(Icons.category, mission?['category'] ?? 'Catégorie non spécifiée'),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-
-                        const SizedBox(width: 12),
-
-                        // ➡️ Stepper des statuts (droite)
-                        Expanded(
-                          flex: 1,
-                          child: Builder(
-                            builder: (context) {
-                              final statusMap = {
-                                'open': 1,
-                                'in_progress': 2,
-                                'done': 3,
-                                'cancelled': 0,
-                              };
-
-                              final currentLevel = statusMap[status] ?? 0;
-
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Opacity(
-                                    opacity: 1.0,
-                                    child: StatusBadge(type: 'mission', status: 'open'),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Opacity(
-                                    opacity: (currentLevel >= 2) ? 1.0 : 0.35,
-                                    child: StatusBadge(type: 'mission', status: 'in_progress'),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Opacity(
-                                    opacity: (currentLevel >= 3) ? 1.0 : 0.35,
-                                    child: StatusBadge(type: 'mission', status: 'done'),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                        )
-                      ],
-                    ),
-                  ),
-
-
-
-                  // --- Badge statuts non-open ---
-                  if (status != 'open')
-                    Padding(
-                      padding:
-                      const EdgeInsets.fromLTRB(20, 20, 20, 10),
-                      child: _buildNonOpenStatusBadge(status),
-                    ),
-
-                  const SizedBox(height: 10),
-
-                  // --- Boutons d'action ---
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (!isOwner && status == 'open')
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: Color(0xFF2C2C2E),
-                                  borderRadius: BorderRadius.circular(20),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.20),
-                                      blurRadius: 6,
-                                      offset: Offset(0, 3),
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.person, size: 14, color: Colors.white),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      "${mission?['offersCount'] ?? 0} offre${(mission?['offersCount'] ?? 0) > 1 ? 's' : ''}",
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-
-                        if (!isOwner && status == 'open') const SizedBox(height: 12),
-
-                        _buildActionButtons(context, status),
-                      ],
-                    ),
-                  ),
-
-
-                  // --- Description ---
-                  _buildSection(
-                    context,
-                    title: "Description",
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          desc.isNotEmpty
-                              ? desc
-                              : "Aucune description fournie.",
-                          style: const TextStyle(
-                              fontSize: 15, height: 1.5, color: kGreyText),
-                        ),
-                        PhotoGridSection(
-                          photoUrls: allPhotos,
-                          onPhotoTap: (url) =>
-                              _openPhotoViewer(context, url, allPhotos),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // --- Questions publiques ---
-                  _buildSection(
-                    context,
-                    title: "Questions publiques",
-                    child: Column(
-                      children: [
-                        MissionQuestionsSection(
-                          missionId: widget.missionId,
-                          stream: _questionsStream,
-                          onReply: (questionId) => _openReplySheet(questionId),
-                        ),
-                        const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _questionCtrl,
-                                decoration: InputDecoration(
-                                  hintText: "Poser une question...",
-                                  contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 10),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    borderSide:
-                                    const BorderSide(color: kPrimary),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    borderSide: const BorderSide(
-                                        color: kPrimary, width: 2),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              icon: const Icon(Icons.send, color: kPrimary),
-                              onPressed: _sendQuestion,
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // --- Posté par ---
-                  _buildSection(
-                    context,
-                    title: "Posté par",
-                    child: (poster == null)
-                        ? const Center(child: CircularProgressIndicator())
-                        : ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: CircleAvatar(
-                        radius: 26,
-                        backgroundImage:
-                        (poster?['photoUrl']?.isNotEmpty ?? false)
-                            ? NetworkImage(poster!['photoUrl'])
-                            : const NetworkImage(
-                            'https://cdn-icons-png.flaticon.com/512/149/149071.png'),
-                      ),
-                      title: Text(
-                          formatUserName(poster?['name'] ?? 'Utilisateur')),
-                      subtitle: Row(
-                        children: [
-                          const Icon(Icons.star,
-                              color: Colors.amber, size: 16),
-                          const SizedBox(width: 4),
-                          Text(
-                            "${poster?['rating']?.toStringAsFixed(1) ?? '...'} "
-                                "(${poster?['reviewsCount'] ?? 0} avis)",
+                          child: Text(
+                            "${budget.toStringAsFixed(0)} €",
                             style: const TextStyle(
-                                fontSize: 13, color: kGreyText),
-                          ),
-                        ],
-                      ),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.chevron_right),
-                        onPressed: () => context.push('/profile/${mission?['posterId']}'),
-                      ),
-                    ),
-                  ),
-
-                  // --- Localisation ---
-                  _buildSection(
-                    context,
-                    title: "Localisation",
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.place_outlined, color: kGreyText),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                location,
-                                style:
-                                const TextStyle(color: kGreyText),
-                              ),
+                              color: kPrimary,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
                             ),
-                          ],
+                          ),
                         ),
-                        const SizedBox(height: 12),
-                        if (_position != null)
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: SizedBox(
-                              height: 160,
-                              child: GoogleMap(
-                                initialCameraPosition: CameraPosition(
-                                    target: _position!, zoom: 13.5),
-                                markers: {
-                                  Marker(
-                                    markerId: const MarkerId("mission"),
-                                    position: _position!,
-                                  )
-                                },
-                                zoomControlsEnabled: false,
-                                liteModeEnabled: true,
-                              ),
-                            ),
-                          ),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 18),
 
-                  const SizedBox(height: 40),
-                ],
+                    // --- Statut + timeline horizontale + chips en grille ---
+                    if (status != 'cancelled') ...[
+                      SmartMissionStepper(status: status), // <--- LE NOUVEAU WIDGET
+                      const SizedBox(height: 24), // Un peu plus d'espace pour respirer
+                    ],
+
+                    // ... juste après SmartMissionStepper(status: status),
+                    // ... et le SizedBox(height: 24),
+
+                    // REMPLACE _buildSmartInfoGrid PAR CECI :
+                    // ---------------------------------------------------------
+                    // NOUVEAU DESIGN : TOUT EN GRIS (Agencement Intelligent)
+                    // ---------------------------------------------------------
+                    // ---------------------------------------------------------
+                    // NOUVEAU DESIGN : TOUT EN GRIS (Agencement Intelligent)
+                    // ---------------------------------------------------------
+                    Wrap(
+                      spacing: 8, // Espace horizontal
+                      runSpacing: 8, // Espace vertical
+                      children: [
+                        // 1. Échéance (L'info la plus importante)
+                        _buildSmartGrayTag(
+                            Icons.calendar_today_rounded, "Avant le $deadline"),
+
+                        // 2. Lieu / Mode (Contexte géographique)
+                        _buildSmartGrayTag(
+                          mode == 'À distance'
+                              ? Icons.laptop_mac
+                              : Icons.place_outlined,
+                          mode == 'À distance' ? "À distance" : location,
+                        ),
+
+                        // 3. Catégorie
+                        _buildSmartGrayTag(
+                            Icons.category_outlined, categoryLabel),
+
+                        // 4. Durée & Flexibilité
+                        _buildSmartGrayTag(
+                            Icons.timer_outlined, _formatDurationHours(mission)),
+                        _buildSmartGrayTag(
+                            Icons.watch_later_outlined, flexibility),
+                      ],
+                    ),
+
+                    // ... La suite de ton code (SizedBox, statusBadge...) reste pareil
+
+                    const SizedBox(height: 14),
+
+                    if (status != 'open')
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6, bottom: 4),
+                        child: _buildNonOpenStatusBadge(status),
+                      ),
+
+                    const SizedBox(height: 8),
+
+                    if (!isOwner && status == 'open')
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: _offerCountChip(offersCount),
+                      ),
+
+                    if (!isOwner && status == 'open')
+                      const SizedBox(height: 12),
+
+                    _buildActionButtons(context, status),
+                  ],
+                ),
               ),
-            ),
-          ],
+
+              const SizedBox(height: 18),
+
+              // Description
+              _buildSection(
+                context,
+                title: "Description",
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      desc.isNotEmpty
+                          ? desc
+                          : "Aucune description fournie.",
+                      style: const TextStyle(
+                        fontSize: 15,
+                        height: 1.5,
+                        color: kGreyText,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    PhotoGridSection(
+                      photoUrls: allPhotos,
+                      onPhotoTap: (url) =>
+                          _openPhotoViewer(context, url, allPhotos),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Questions publiques
+              _buildSection(
+                context,
+                title: "Questions publiques",
+                child: Column(
+                  children: [
+                    MissionQuestionsSection(
+                      missionId: widget.missionId,
+                      stream: _questionsStream,
+                      onReply: (questionId) => _openReplySheet(questionId),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF3F3FA),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 2),
+                            child: TextField(
+                              controller: _questionCtrl,
+                              decoration: const InputDecoration(
+                                border: InputBorder.none,
+                                isDense: true,
+                                hintText: "Poser une question...",
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        InkWell(
+                          onTap: _sendQuestion,
+                          borderRadius: BorderRadius.circular(999),
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: kPrimary,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: const Icon(
+                              Icons.send_rounded,
+                              size: 18,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // Posté par
+              _buildSection(
+                context,
+                title: "Posté par",
+                child: (poster == null)
+                    ? const Center(child: CircularProgressIndicator())
+                    : ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    radius: 26,
+                    backgroundImage:
+                    (poster?['photoUrl']?.isNotEmpty ?? false)
+                        ? NetworkImage(poster!['photoUrl'])
+                        : const NetworkImage(
+                        'https://cdn-icons-png.flaticon.com/512/149/149071.png'),
+                  ),
+                  title: Text(
+                    formatUserName(
+                        poster?['name'] ?? 'Utilisateur'),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: Row(
+                    children: [
+                      const Icon(Icons.star,
+                          color: Colors.amber, size: 16),
+                      const SizedBox(width: 4),
+                      Text(
+                        "${poster?['rating']?.toStringAsFixed(1) ?? '...'} "
+                            "(${poster?['reviewsCount'] ?? 0} avis)",
+                        style: const TextStyle(
+                            fontSize: 13, color: kGreyText),
+                      ),
+                    ],
+                  ),
+                  trailing: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF3F3FA),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    padding: const EdgeInsets.all(6),
+                    child: const Icon(Icons.chevron_right),
+                  ),
+                  onTap: () => context
+                      .push('/profile/${mission?['posterId']}'),
+                ),
+              ),
+
+              // Localisation
+              _buildSection(
+                context,
+                title: "Localisation",
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.place_outlined, color: kGreyText),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            location,
+                            style: const TextStyle(color: kGreyText),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (_position != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: SizedBox(
+                          height: 160,
+                          child: GoogleMap(
+                            initialCameraPosition: CameraPosition(
+                                target: _position!, zoom: 13.5),
+                            markers: {
+                              Marker(
+                                markerId: const MarkerId("mission"),
+                                position: _position!,
+                              )
+                            },
+                            zoomControlsEnabled: false,
+                            liteModeEnabled: true,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1777,6 +1881,69 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   // HELPERS UI
   // =========================================================================
 
+
+  Widget _buildStatusStepper(String status) {
+    int level;
+    switch (status) {
+      case 'open':
+        level = 0;
+        break;
+      case 'in_progress':
+        level = 1;
+        break;
+      case 'done':
+      case 'completed':
+      case 'closed':
+        level = 2;
+        break;
+      default:
+        level = 0;
+    }
+
+    return SizedBox(
+      width: 120,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Stack(
+            children: [
+              // ligne verticale derrière les badges
+              Positioned(
+                left: 22,
+                top: 4,
+                bottom: 4,
+                child: Container(
+                  width: 2,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE3E4FA),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  StatusBadge(type: 'mission', status: 'open'),
+                  const SizedBox(height: 4),
+                  Opacity(
+                    opacity: level >= 1 ? 1.0 : 0.35,
+                    child:
+                    StatusBadge(type: 'mission', status: 'in_progress'),
+                  ),
+                  const SizedBox(height: 4),
+                  Opacity(
+                    opacity: level >= 2 ? 1.0 : 0.25,
+                    child: StatusBadge(type: 'mission', status: 'done'),
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+
   Widget _buildActionButtons(BuildContext context, String status) {
     final currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) return const SizedBox.shrink();
@@ -1784,9 +1951,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     final String assignedTo = (mission?['assignedTo'] ?? '').toString();
     final bool isAssignedToMe = (assignedTo == currentUser.uid);
 
-
-
-    // --- 1. VUE CLIENT ---
+    // CLIENT
     if (isOwner) {
       switch (status) {
         case 'open':
@@ -1799,12 +1964,18 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                     .collection('offers')
                     .snapshots(),
                 builder: (context, snap) {
-                  final count = snap.data?.docs.length ?? 0;
+                  final docs = snap.data?.docs ?? [];
+                  final activeCount = docs.where((d) {
+                    final data = d.data() as Map<String, dynamic>;
+                    final st = (data['status'] ?? 'pending').toString();
+                    return st != 'cancelled';
+                  }).length;
                   return _buildSecondaryButton(
                     context,
-                    onPressed: () => context.push('/missions/${widget.missionId}/offers'),
+                    onPressed: () => context
+                        .push('/missions/${widget.missionId}/offers'),
                     icon: Icons.people_outline,
-                    label: "Voir les offres reçues ($count)",
+                    label: "Voir les offres reçues ($activeCount)",
                   );
                 },
               ),
@@ -1852,6 +2023,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
           );
 
         case 'done':
+        case 'completed':
           return FutureBuilder<bool>(
             future: _hasUserAlreadyReviewed(),
             builder: (context, snap) {
@@ -1870,7 +2042,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                 );
               }
 
-              // NEW → bouton laisser avis
               return _buildPrimaryButton(
                 context,
                 onPressed: _handleLeaveReview,
@@ -1880,7 +2051,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
             },
           );
 
-
         case 'cancelled':
           return _buildPrimaryButton(
             context,
@@ -1889,49 +2059,82 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
             label: "Rouvrir la mission",
           );
         case 'closed':
-          return _buildStatusBadge(
-            text: "Mission clôturée",
-            color: kPrimary,
-            icon: Icons.lock_outline,
-          );
-
+          return const SizedBox.shrink();
 
         default:
           return const SizedBox.shrink();
       }
     }
 
-    // --- 2. VUE PRESTATAIRE ---
-    // VUE PRESTATAIRE
+    // PRESTATAIRE
     else {
       switch (status) {
         case 'open':
           if (_hasMadeOffer) {
-            return Column(children: [
-              _buildInfoBox(context, icon: Icons.check_circle, label: "Offre envoyée", color: kPrimary),
-              const SizedBox(height: 12),
-              _buildSecondaryButton(context, onPressed: _onEditOfferPressed, icon: Icons.edit_outlined, label: "Modifier mon offre"),
-              const SizedBox(height: 12),
-              _buildDangerButton(context, onPressed: _onWithdrawOfferPressed, icon: Icons.delete_outline, label: "Retirer mon offre"),
-            ]);
+            return Column(
+              children: [
+                _buildInfoBox(
+                  context,
+                  icon: Icons.check_circle,
+                  label: "Offre envoyée",
+                  color: kPrimary,
+                ),
+                const SizedBox(height: 12),
+                if (_myOfferId != null)
+                  _buildSecondaryButton(
+                    context,
+                    onPressed: () => context.push(
+                        '/missions/${widget.missionId}/offers/$_myOfferId'),
+                    icon: Icons.remove_red_eye_outlined,
+                    label: "Voir mon offre",
+                  ),
+              ],
+            );
           }
-          return _buildPrimaryButton(context, onPressed: _onOfferPressed, icon: Icons.add_circle_outline, label: "Faire une offre");
+          return _buildPrimaryButton(
+            context,
+            onPressed: _onOfferPressed,
+            icon: Icons.add_circle_outline,
+            label: "Faire une offre",
+          );
 
         case 'in_progress':
           if (isAssignedToMe) {
-            return Column(children: [
-              _buildInfoBox(context, icon: Icons.handshake_outlined, label: "Vous êtes le prestataire !", color: Colors.green[700]!),
-              const SizedBox(height: 12),
-              _buildPrimaryButton(context, onPressed: _handleOpenChat, icon: Icons.chat_bubble_outline, label: "Ouvrir la discussion"),
-              const SizedBox(height: 12),
-              _buildDangerButton(context, onPressed: _handleCancelMission, icon: Icons.cancel_outlined, label: "Annuler (Désistement)"),
-            ]);
+            return Column(
+              children: [
+                _buildInfoBox(
+                  context,
+                  icon: Icons.handshake_outlined,
+                  label: "Vous êtes le prestataire !",
+                  color: Colors.green[700]!,
+                ),
+                const SizedBox(height: 12),
+                _buildPrimaryButton(
+                  context,
+                  onPressed: _handleOpenChat,
+                  icon: Icons.chat_bubble_outline,
+                  label: "Ouvrir la discussion",
+                ),
+                const SizedBox(height: 12),
+                _buildDangerButton(
+                  context,
+                  onPressed: _handleCancelMission,
+                  icon: Icons.cancel_outlined,
+                  label: "Annuler (Désistement)",
+                ),
+              ],
+            );
           }
           return const SizedBox.shrink();
 
         case 'done':
           if (isAssignedToMe) {
-            return _buildPrimaryButton(context, onPressed: _handleLeaveReview, icon: Icons.star_outline, label: "Laisser un avis");
+            return _buildPrimaryButton(
+              context,
+              onPressed: _handleLeaveReview,
+              icon: Icons.star_outline,
+              label: "Laisser un avis",
+            );
           }
           return const SizedBox.shrink();
 
@@ -1939,7 +2142,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
           return const SizedBox.shrink();
       }
     }
-
   }
 
   Widget _buildPrimaryButton(
@@ -1948,16 +2150,26 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         required IconData icon,
         required String label,
       }) {
-    return ElevatedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon),
-      label: Text(label),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: kPrimary,
-        foregroundColor: Colors.white,
-        minimumSize: const Size.fromHeight(55),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 20),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 15,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kPrimary,
+          foregroundColor: Colors.white,
+          minimumSize: const Size.fromHeight(52),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
         ),
       ),
     );
@@ -1969,41 +2181,27 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         required IconData icon,
         required String label,
       }) {
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
-        minimumSize: const Size.fromHeight(50),
-        side: const BorderSide(color: kPrimary, width: 1.3),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        foregroundColor: kPrimary,
-      ),
-    );
-  }
-  Widget _alreadyReviewedBox() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade200,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.check_circle, color: Colors.green),
-          SizedBox(width: 8),
-          Text(
-            "Avis déjà donné",
-            style: TextStyle(
-              fontWeight: FontWeight.w600,
-              color: Colors.green,
-            ),
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 20),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
           ),
-        ],
+        ),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+          minimumSize: const Size.fromHeight(48),
+          side: const BorderSide(color: kPrimary, width: 1.3),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          foregroundColor: kPrimary,
+        ),
       ),
     );
   }
@@ -2014,18 +2212,27 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         required IconData icon,
         required String label,
       }) {
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: OutlinedButton.styleFrom(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
-        minimumSize: const Size.fromHeight(50),
-        side: BorderSide(color: Colors.red[700]!, width: 1.3),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 20),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 14,
+          ),
         ),
-        foregroundColor: Colors.red[700],
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 18),
+          minimumSize: const Size.fromHeight(48),
+          side: BorderSide(color: Colors.red[700]!, width: 1.3),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          foregroundColor: Colors.red[700],
+        ),
       ),
     );
   }
@@ -2039,8 +2246,8 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: kBackground,
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFFF5F5FA),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -2070,8 +2277,8 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -2092,7 +2299,6 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   }
 
   Widget _buildInProgressBadge(BuildContext context) {
-
     final name = assignedToUser?['name'] ?? 'Prestataire';
     final formattedName = formatUserName(name);
     final rating = (assignedToUser?['rating'] ?? 0).toDouble();
@@ -2109,7 +2315,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: const Color(0xFFE4F8E9),
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(color: Colors.green[200]!),
         ),
         child: Column(
@@ -2161,35 +2367,124 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     );
   }
 
+  Widget _buildDoneWithProviderBadge(
+      BuildContext context, {
+        required String title,
+      }) {
+    final name = assignedToUser?['name'] ?? 'Prestataire';
+    final formattedName = formatUserName(name);
+    final rating = (assignedToUser?['rating'] ?? 0).toDouble();
+    final reviewsCount = assignedToUser?['reviewsCount'] ?? 0;
+    final userId = mission?['assignedTo'] ?? '';
+
+    return GestureDetector(
+      onTap: () {
+        if (userId.toString().isNotEmpty) {
+          context.push('/profile/$userId');
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE4F8E9),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.green[200]!),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.check_circle_outline,
+                  color: Colors.green[800]!,
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: Colors.green[800]!,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  formattedName,
+                  style: const TextStyle(
+                    color: kGreyText,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Icon(Icons.star, color: Colors.amber, size: 14),
+                const SizedBox(width: 2),
+                Text(
+                  "${rating.toStringAsFixed(1)} ($reviewsCount avis)",
+                  style: const TextStyle(fontSize: 13, color: kGreyText),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildNonOpenStatusBadge(String status) {
-    switch (status) {
+    final s = status.toLowerCase();
+
+    switch (s) {
       case 'in_progress':
         if (isOwner) {
-          // CLIENT → voit le prestataire choisi (normal)
           return _buildInProgressBadge(context);
         }
-        // PRESTATAIRE → NE DOIT RIEN VOIR EN HAUT
         return const SizedBox.shrink();
 
-
-      case 'completed':
       case 'done':
+      case 'completed':
+        if (isOwner && assignedToUser != null) {
+          return _buildDoneWithProviderBadge(
+            context,
+            title: "Mission terminée avec un prestataire",
+          );
+        }
         return _buildStatusBadge(
           text: "Mission terminée",
           color: kPrimary,
           icon: Icons.check_circle_outline,
         );
 
+      case 'closed':
+        if (isOwner && assignedToUser != null) {
+          return _buildDoneWithProviderBadge(
+            context,
+            title: "Mission clôturée avec un prestataire",
+          );
+        }
+        return _buildStatusBadge(
+          text: "Mission clôturée",
+          color: Colors.grey.shade700,
+          icon: Icons.lock_outline,
+        );
       case 'cancelled':
         return _buildStatusBadge(
           text: "Mission annulée",
-          color: Colors.red[700]!,
+          color: Colors.redAccent,
           icon: Icons.cancel_outlined,
         );
 
       default:
         return _buildStatusBadge(
-          text: "Statut: ${status.capitalize()}",
+          text: "Statut : ${status.capitalize()}",
           color: Colors.grey,
           icon: Icons.info_outline,
         );
@@ -2211,8 +2506,9 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
             InteractiveViewer(
               minScale: 0.5,
               maxScale: 4.0,
-              child:
-              Center(child: Image.network(initialUrl, fit: BoxFit.contain)),
+              child: Center(
+                child: Image.network(initialUrl, fit: BoxFit.contain),
+              ),
             ),
             Positioned(
               top: 60.0,
@@ -2239,24 +2535,23 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
   }
 
   Widget _chip(IconData icon, String label) => Container(
-    padding:
-    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     decoration: BoxDecoration(
-      color: kBackground,
-      borderRadius: BorderRadius.circular(99),
-      border: Border.all(color: Colors.grey.shade200),
+      color: const Color(0xFFF3F3FA),
+      borderRadius: BorderRadius.circular(999),
     ),
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 16, color: kGreyText),
-        const SizedBox(width: 5),
+        const SizedBox(width: 6),
         Flexible(
           child: Text(
             label,
             style: const TextStyle(
               color: kGreyText,
               fontWeight: FontWeight.w500,
+              fontSize: 13,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -2271,22 +2566,281 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
         required Widget child,
       }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.94),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 12),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+  int _statusStepIndex(String status) {
+    switch (status) {
+      case 'open':
+        return 0;
+      case 'in_progress':
+        return 1;
+      case 'done':
+      case 'completed':
+      case 'closed':
+        return 2;
+      default:
+        return 0;
+    }
+  }
+
+  Widget _buildMissionStatusHeader(String status) {
+    final currentStep = _statusStepIndex(status);
+    const allStatuses = ['open', 'in_progress', 'done'];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: List.generate(allStatuses.length, (index) {
+            final st = allStatuses[index];
+            final isActive = index == currentStep;
+            return Expanded(
+              child: Opacity(
+                opacity: isActive ? 1.0 : 0.35,
+                child: Center(
+                  child: StatusBadge(
+                    type: 'mission',
+                    status: st,
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 10),
+      ],
+    );
+  }
+
+  // ===========================================================================
+  // ✨ NOUVEAU DESIGN : PASTILLES "JOLIES ET SIMPLES"
+  // ===========================================================================
+
+  // ===========================================================================
+  // ✨ DESIGN "SMART GRAY" : Sobre, Propre, Gris (Code Final)
+  // ===========================================================================
+
+  Widget _buildSmartGrayTag(IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        // Fond Gris clair solide (plus net que la transparence)
+        color: const Color(0xFFF4F6F8),
+        borderRadius: BorderRadius.circular(12),
+        // Bordure subtile
+        border: Border.all(color: const Color(0xFFE0E0E0), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Divider(height: 40, thickness: 0.5),
-          Text(
-            title,
-            style: Theme.of(context)
-                .textTheme
-                .titleLarge
-                ?.copyWith(fontWeight: FontWeight.w700, fontSize: 18),
+          // Icône gris moyen
+          Icon(icon, size: 15, color: const Color(0xFF757575)),
+          const SizedBox(width: 8),
+          // Texte Gris Foncé / Noir
+          Flexible(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF2C2C2C),
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          const SizedBox(height: 12),
-          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrettyChip(IconData icon, String label, {required Color color}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        // Fond très léger de la couleur demandée
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+        // Bordure subtile pour bien définir la forme
+        border: Border.all(color: color.withOpacity(0.2), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // L'icône prend la couleur vive
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 6),
+          // Le texte reste sombre pour la lisibilité
+          Flexible(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF2F2E41), // Noir doux
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
   }
 }
+
+class SmartMissionStepper extends StatelessWidget {
+  final String status;
+
+  const SmartMissionStepper({super.key, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final int currentStep = _getStepFromStatus(status);
+
+    const List<Color> activeGradient = [
+      Color(0xFF6C63FF),
+      Color(0xFF00B8D4),
+    ];
+    final Color shadowColor = activeGradient.last.withOpacity(0.5);
+    final List<String> labels = ["Ouverte", "En cours", "Terminée"];
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+          child: Row(
+            children: List.generate(3, (index) {
+              final bool isReached = index <= currentStep;
+              final bool isLineActive = index < currentStep;
+
+              return Expanded(
+                flex: index == 2 ? 0 : 1,
+                child: Row(
+                  children: [
+                    // ROND
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 500),
+                      curve: Curves.easeOutBack,
+                      width: isReached ? 20 : 14,
+                      height: isReached ? 20 : 14,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: isReached
+                            ? const LinearGradient(
+                          colors: activeGradient,
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        )
+                            : null,
+                        color: isReached ? null : const Color(0xFFE0E5ED),
+                        boxShadow: isReached
+                            ? [
+                          BoxShadow(
+                            color: shadowColor,
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          )
+                        ]
+                            : [],
+                        border: Border.all(
+                            color: Colors.white, width: isReached ? 2.5 : 0),
+                      ),
+                      child: Center(
+                        child: isReached
+                            ? const Icon(Icons.check,
+                            size: 10, color: Colors.white)
+                            : null,
+                      ),
+                    ),
+                    // LIGNE
+                    if (index != 2)
+                      Expanded(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 700),
+                          height: 4,
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(2),
+                            gradient: isLineActive
+                                ? const LinearGradient(colors: activeGradient)
+                                : null,
+                            color:
+                            isLineActive ? null : const Color(0xFFE0E5ED),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: List.generate(3, (index) {
+            final bool isCurrentStep = index == currentStep;
+            final Color labelColor = index <= currentStep
+                ? const Color(0xFF1A1D26)
+                : Colors.grey.shade400;
+
+            return Text(
+              labels[index],
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isCurrentStep ? FontWeight.w800 : FontWeight.w500,
+                color: labelColor,
+              ),
+            );
+          }),
+        )
+      ],
+    );
+  }
+
+  int _getStepFromStatus(String status) {
+    switch (status) {
+      case 'in_progress':
+      case 'confirmed':
+        return 1;
+      case 'done':
+      case 'completed':
+      case 'paid':
+      case 'closed':
+        return 2;
+      case 'open':
+      default:
+        return 0;
+    }
+  }
+}
+

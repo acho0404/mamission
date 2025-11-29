@@ -15,11 +15,13 @@ import '../features/chat/chat_detail_page.dart';
 import '../features/profile/profile_page.dart';
 import '../features/profile/public_profile_page.dart';
 import '../features/reviews/reviews_page.dart';
-
+import 'package:mamission/features/explore/all_providers_page.dart';
+import 'package:mamission/features/shell/shell.dart';
 import '../features/auth/login_page.dart';
 import '../features/auth/register_page.dart';
 import '../features/auth/reset_password_page.dart';
-
+import '../features/payments/wallet_page.dart'; // Assurez-vous d'avoir créé le fichier
+import '../features/profile/coordonnees_page.dart'; // <-- AJOUTER CETTE LIGNE
 // --- Placeholder générique ---
 class _PlaceholderPage extends StatelessWidget {
   final String title;
@@ -54,7 +56,6 @@ GoRouter buildRouter() {
       final user = FirebaseAuth.instance.currentUser;
       final loc = state.matchedLocation;
 
-      // routes auth
       final isAuthPage = loc == '/login' || loc == '/register';
 
       if (user == null && !isAuthPage) return '/login';
@@ -81,13 +82,60 @@ GoRouter buildRouter() {
         },
       ),
 
+      GoRoute(
+        path: '/payments',
+        builder: (_, __) => const WalletPage(),
+      ),
+      GoRoute(
+        path: '/providers',
+        builder: (context, state) => const AllProvidersPage(),
+      ),
+
+// AJOUTEZ cette route pour les settings (utilisera aussi WalletPage ou une page Settings dédiée)
       // =========================================================
-      // 🔹 SHELL GLOBAL
+      // 🔹 SETTINGS (Gestion dynamique)
+      // =========================================================
+      GoRoute(
+        path: '/settings/:type', // type = kyc, security, contact
+        builder: (context, state) {
+          final type = state.pathParameters['type'];
+
+          // 1. Si l'URL est /settings/contact, on affiche ta nouvelle page
+          if (type == 'contact') {
+            return const CoordonneesPage();
+          }
+
+          // 2. Pour les autres types (kyc, security...), on garde le placeholder
+          return Scaffold(
+            appBar: AppBar(title: Text("Paramètres: $type")),
+            body: Center(child: Text("Module $type en construction")),
+          );
+        },
+      ),
+      // 🔹 VITRINE PUBLIQUE DE SOI
+      GoRoute(
+        path: '/profile/public',
+        builder: (context, state) {
+          final uidParam = state.uri.queryParameters['uid'];
+          final editParam = state.uri.queryParameters['edit'];
+
+          final currentUser = FirebaseAuth.instance.currentUser;
+          final uid = uidParam ?? currentUser!.uid;
+          final openEdit = editParam == '1';
+
+          return PublicProfilePage(
+            userId: uid,
+            openEditOnStart: openEdit,
+          );
+        },
+      ),
+
+      // =========================================================
+      // 🔹 SHELL GLOBAL (bottom bar)
       // =========================================================
       ShellRoute(
         builder: (context, state, child) => ShellScaffold(child: child),
         routes: [
-
           // --- Explore ---
           GoRoute(
             path: '/explore',
@@ -139,8 +187,10 @@ GoRouter buildRouter() {
           ),
 
           // --- Chat ---
-          GoRoute(path: '/chat', builder: (_, __) => const ThreadsPage()),
-
+          GoRoute(
+            path: '/chat',
+            builder: (_, __) => const ThreadsPage(),
+          ),
           GoRoute(
             path: '/chat/:id',
             builder: (_, state) {
@@ -149,13 +199,13 @@ GoRouter buildRouter() {
             },
           ),
 
-          // --- Profil ---
+          // --- Profil privé ---
           GoRoute(
             path: '/profile',
             builder: (_, __) => const ProfilePage(),
           ),
 
-          // --- Profil public ---
+          // --- Profil public d’un autre user ---
           GoRoute(
             path: '/profile/:userId',
             builder: (_, state) {
@@ -165,15 +215,15 @@ GoRouter buildRouter() {
           ),
 
           // =========================================================
-          // 🔹 AVIS & NOTES — CORRIGÉ
+          // 🔹 AVIS & NOTES
           // =========================================================
           GoRoute(
-            name: 'reviews',
             path: '/reviews/:userId',
+            name: 'reviews',
             builder: (context, state) {
               final userId = state.pathParameters['userId']!;
-              final missionId = state.uri.queryParameters['mission'] ?? '';
-              final missionTitle = state.uri.queryParameters['title'] ?? 'Mission';
+              final missionId = state.uri.queryParameters['missionId'] ?? '';
+              final missionTitle = state.uri.queryParameters['missionTitle'] ?? '';
 
               return ReviewsPage(
                 userId: userId,
@@ -183,13 +233,7 @@ GoRouter buildRouter() {
             },
           ),
 
-
-
           // --- Paiements (placeholder) ---
-          GoRoute(
-            path: '/payments',
-            builder: (_, __) => const _PlaceholderPage('Paiement'),
-          ),
         ],
       ),
     ],

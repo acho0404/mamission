@@ -51,7 +51,10 @@ Future<void> main() async {
       print("🟣 Token FCM enregistré pour ${user.uid}");
     }
   });
-
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: true,
+    cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+  );
   // --- Gestion de la présence utilisateur ---
   _initUserPresence();
 

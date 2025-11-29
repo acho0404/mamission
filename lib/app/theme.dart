@@ -37,9 +37,10 @@ ThemeData buildLightTheme() {
 
     // --- TYPOGRAPHIE ---
     textTheme: const TextTheme(
+      // Gros titres type "LA MISSION"
       displaySmall: TextStyle(
         fontSize: 32,
-        fontWeight: FontWeight.w800,
+        fontWeight: FontWeight.w900,   // ⬅ Aligné sur ta page mission
         color: kTextPrimary,
         letterSpacing: -1.0,
       ),
@@ -71,11 +72,14 @@ ThemeData buildLightTheme() {
         fontSize: 14,
         fontWeight: FontWeight.w500,
         color: kTextSecondary,
+        height: 1.4,
       ),
+      // Labels type "CATÉGORIE", "HORAIRE" etc.
       labelSmall: TextStyle(
         fontSize: 11,
         fontWeight: FontWeight.w700,
-        letterSpacing: 0.2,
+        letterSpacing: 1.2,   // ⬅ Comme dans La mission
+        color: kTextSecondary,
       ),
     ),
 
@@ -118,9 +122,9 @@ ThemeData buildLightTheme() {
         borderSide: const BorderSide(color: kErrorColor, width: 2),
       ),
       hintStyle: TextStyle(
-          color: Colors.grey.shade400,
-          fontWeight: FontWeight.w500,
-          fontSize: 15
+        color: Colors.grey.shade400,
+        fontWeight: FontWeight.w500,
+        fontSize: 15,
       ),
     ),
 
@@ -227,19 +231,41 @@ ThemeData buildDarkTheme() {
       elevation: 0,
       centerTitle: true,
       titleTextStyle: TextStyle(
-          fontFamily: kFontFamily,
-          fontSize: 17,
-          fontWeight: FontWeight.w700,
-          color: Colors.white
+        fontFamily: kFontFamily,
+        fontSize: 17,
+        fontWeight: FontWeight.w700,
+        color: Colors.white,
       ),
     ),
 
     textTheme: const TextTheme(
-      displaySmall: TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -1.0),
-      headlineMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.5),
-      titleLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
-      bodyLarge: TextStyle(fontSize: 16, fontWeight: FontWeight.w500, color: Colors.white70),
-      bodyMedium: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey),
+      displaySmall: TextStyle(
+        fontSize: 32,
+        fontWeight: FontWeight.w800,
+        color: Colors.white,
+        letterSpacing: -1.0,
+      ),
+      headlineMedium: TextStyle(
+        fontSize: 24,
+        fontWeight: FontWeight.w800,
+        color: Colors.white,
+        letterSpacing: -0.5,
+      ),
+      titleLarge: TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+        color: Colors.white,
+      ),
+      bodyLarge: TextStyle(
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+        color: Colors.white70,
+      ),
+      bodyMedium: TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+        color: Colors.grey,
+      ),
     ),
 
     inputDecorationTheme: InputDecorationTheme(

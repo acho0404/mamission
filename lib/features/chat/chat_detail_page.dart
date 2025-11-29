@@ -4,6 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // ✅ Ajouté pour les retours haptiques
 import 'package:mamission/shared/apple_appbar.dart';
+import 'package:go_router/go_router.dart';
+import 'package:mamission/shared/services/notification_service.dart';
 
 class ChatDetailPage extends StatefulWidget {
   final String chatId;
@@ -14,12 +16,30 @@ class ChatDetailPage extends StatefulWidget {
 }
 
 class _ChatDetailPageState extends State<ChatDetailPage> {
+  // 🎨 Palette & état mission
+  static const Color kPrimary = Color(0xFF6C63FF);
+  static const Color kBackground = Color(0xFFF8F6FF);
+
+  String? _missionId;
+  String _missionStatus = '';
+  StreamSubscription? _missionSub;
+  Map<String, dynamic>? _missionData;
+
+  bool get _isArchived {
+    final s = _missionStatus.toLowerCase();
+
+    // 👇 aligne ça EXACTEMENT avec les statuts que tu utilises dans `missions`
+    return s == 'done' ||        // mission terminée
+        s == 'completed' ||   // si tu l'utilises quelque part
+        s == 'cancelled' ||   // mission annulée
+        s == 'closed';        // si tu as un statut "closed"/"archived"
+  }
+
   bool _keyboardVisible = false;
-  // ✅✅✅ AJOUTEZ CES LIGNES ICI ✅✅✅
   bool _initialScrollDone = false;
   int _firstUnreadIndex = -1;
   final GlobalKey _firstUnreadKey = GlobalKey();
-  // ✅✅✅ FIN DES LIGNES À AJOUTER ✅✅✅
+
   final _msgCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   final user = FirebaseAuth.instance.currentUser!;
@@ -36,7 +56,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
   final _focusNode = FocusNode();
 
-  // ✅ AMÉLIORATION 10/10 : Timer pour le "Typing" (Performance)
+  // ✅ Timer pour le "Typing"
   Timer? _typingTimer;
 
   @override
@@ -47,15 +67,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
     _focusNode.addListener(_onFocusChange);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future.delayed(const Duration(milliseconds: 250));
-      if (!_scrollCtrl.hasClients) return;
-      try {
-        _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
-        _initialScrollDone = true;
-      } catch (_) {}
-    });
-
     _scrollCtrl.addListener(() {
       final maxScroll = _scrollCtrl.position.maxScrollExtent;
       final current = _scrollCtrl.position.pixels;
@@ -64,6 +75,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         _markMessagesAsRead();
       }
     });
+
+    // ✅ dire au backend "je suis dans ce chat"
+    _setActiveChat(true);
   }
 
   void _onFocusChange() {
@@ -73,10 +87,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   }
 
   // =======================================================================
-  // ✅ LA FONCTION 10/10 CORRIGÉE
+  // ✅ MARQUER LES MESSAGES COMME LUS
   // =======================================================================
   Future<void> _markMessagesAsRead() async {
-    // Sécurité : ne rien faire si l'ID de l'autre n'est pas encore chargé
     if (otherId == null) return;
 
     final ref = FirebaseFirestore.instance
@@ -84,24 +97,16 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         .doc(widget.chatId)
         .collection('messages');
 
-    // 1. ✅ CORRECTION : Trouver tous les messages DE L'AUTRE
-    // (On ne peut pas faire 'whereDoesNotContain', on filtre donc après)
     final messagesFromOther = await ref
         .where('from', isEqualTo: otherId)
         .get();
 
-    // 2. ✅ CORRECTION : Filtrer en local (en Dart) pour trouver les non-lus
     final unreadDocs = messagesFromOther.docs.where((doc) {
       final data = doc.data();
       final readByList = (data['readBy'] as List?) ?? [];
-      // Retourne VRAI si notre ID n'est PAS dans la liste
       return !readByList.contains(user.uid);
     }).toList();
 
-    // S'il n'y a rien à marquer, on arrête.
-    if (unreadDocs.isEmpty) return;
-
-    // 3. Créer un "Batch" pour 1 SEULE écriture (10/10 performance)
     final batch = FirebaseFirestore.instance.batch();
 
     for (var doc in unreadDocs) {
@@ -110,43 +115,68 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       });
     }
 
-    // 4. Mettre à jour le chat principal
     batch.update(
         FirebaseFirestore.instance.collection('chats').doc(widget.chatId), {
       'readBy': FieldValue.arrayUnion([user.uid]),
     });
 
-    // 5. Exécuter le batch
     await batch.commit();
   }
-  // =======================================================================
 
   Future<void> _loadChatInfo() async {
     final doc = await FirebaseFirestore.instance
         .collection('chats')
         .doc(widget.chatId)
         .get();
+
     if (!doc.exists) return;
     final data = doc.data()!;
-    final users = List<String>.from(data['users']);
+
+    // 🔗 Lien vers la mission
+    final missionId = (data['missionId'] ?? '').toString();
+    if (missionId.isNotEmpty) {
+      _missionId = missionId;
+      _listenMission(missionId);
+
+      final missionSnap = await FirebaseFirestore.instance
+          .collection('missions')
+          .doc(missionId)
+          .get();
+
+      if (missionSnap.exists) {
+        setState(() {
+          _missionData = missionSnap.data();
+        });
+      }
+    }
+
+    // --- 👤 Autre utilisateur du chat ---
+    final rawUsers =
+        data['users'] ?? data['usersIds'] ?? data['participants'] ?? [];
+    final users = List<String>.from(rawUsers);
     final currentUid = user.uid;
     otherId = users.firstWhere((id) => id != currentUid);
+
     final userNames = Map<String, dynamic>.from(data['userNames'] ?? {});
     final userPhotos = Map<String, dynamic>.from(data['userPhotos'] ?? {});
+
     setState(() {
       otherName = userNames[otherId] ?? 'Utilisateur';
       otherPhoto = userPhotos[otherId] ?? '';
     });
+
     if (otherName == 'Utilisateur' || otherPhoto!.isEmpty) {
       final userSnap = await FirebaseFirestore.instance
           .collection('users')
           .doc(otherId)
           .get();
       final udata = userSnap.data() ?? {};
+
       setState(() {
         otherName = udata['name'] ?? 'Utilisateur';
         otherPhoto = udata['photoUrl'] ?? '';
       });
+
       await FirebaseFirestore.instance
           .collection('chats')
           .doc(widget.chatId)
@@ -155,10 +185,32 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         'userPhotos.$otherId': otherPhoto,
       });
     }
+
     _listenUserPresence();
     _markMessagesAsRead();
   }
 
+  Future<void> _setActiveChat(bool isActive) async {
+    try {
+      final userRef = FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid);
+
+      if (isActive) {
+        await userRef.update({
+          'activeChatId': widget.chatId,
+          'activeChatUpdatedAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        await userRef.update({
+          'activeChatId': FieldValue.delete(),
+          'activeChatUpdatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+    } catch (_) {
+      // on ignore l'erreur pour ne pas casser l'UI
+    }
+  }
 
   void _listenUserPresence() {
     FirebaseFirestore.instance
@@ -197,17 +249,14 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           _scrollCtrl.position.maxScrollExtent - 120;
 
       if (snap.docChanges.any((c) => c.type == DocumentChangeType.added)) {
-
         if (snap.docs.length == 1) {
           _scrollToBottom(instant: true);
           setState(() => _showNewBadge = false);
-        }
-        else if (atBottom || _keyboardVisible) {
+        } else if (atBottom || _keyboardVisible) {
           _scrollToBottom(instant: true);
           setState(() => _showNewBadge = false);
           _markMessagesAsRead();
-        }
-        else {
+        } else {
           setState(() => _showNewBadge = true);
           HapticFeedback.mediumImpact();
         }
@@ -215,8 +264,24 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     });
   }
 
-  // ✅ LOGIQUE WHATSAPP : Amélioration du statut pour inclure les dates
+  void _listenMission(String missionId) {
+    _missionSub?.cancel();
+    _missionSub = FirebaseFirestore.instance
+        .collection('missions')
+        .doc(missionId)
+        .snapshots()
+        .listen((snap) {
+      final data = snap.data();
+      if (data == null) return;
+      setState(() {
+        _missionStatus = (data['status'] ?? '').toString();
+      });
+    });
+  }
+
+  // ✅ LOGIQUE WHATSAPP : statut + dates
   String _statusText() {
+    if (_isArchived) return "Discussion archivée";
     if (_isTyping) return "En train d’écrire...";
     if (_isOnline) return "En ligne";
     if (_lastSeen == null) return "Hors ligne";
@@ -242,8 +307,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     return "Vu le ${lastSeenDate.day}/${lastSeenDate.month}/${lastSeenDate.year} à $time";
   }
 
-
   Future<void> _sendMessage() async {
+    if (_isArchived) return;
     final text = _msgCtrl.text.trim();
     if (text.isEmpty) return;
     _msgCtrl.clear();
@@ -272,8 +337,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     HapticFeedback.lightImpact();
   }
 
-  // ✅ AMÉLIORATION 10/10 : Logique "Typing" efficace (debounce)
   void _updateTypingStatus(String text) {
+    if (_isArchived) return;
     if (text.isEmpty) {
       _typingTimer?.cancel();
       FirebaseFirestore.instance
@@ -300,7 +365,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     });
   }
 
-
   void _scrollToBottom({bool instant = false}) {
     if (!_scrollCtrl.hasClients || !_initialScrollDone) return;
 
@@ -319,8 +383,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     });
   }
 
-
-
   @override
   void dispose() {
     _msgCtrl.dispose();
@@ -329,11 +391,13 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     _chatSub?.cancel();
     _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
-    _typingTimer?.cancel(); // ✅ Nettoyer le timer
+    _typingTimer?.cancel();
+    _missionSub?.cancel();
+    _setActiveChat(false);
     super.dispose();
   }
 
-  // --- Fonctions Helper pour les dates (LOGIQUE WHATSAPP) ---
+  // --- Helpers dates ---
   bool _isSameDay(Timestamp? ts1, Timestamp? ts2) {
     if (ts1 == null || ts2 == null) return false;
     final date1 = ts1.toDate();
@@ -384,7 +448,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
   Widget _buildUnreadBanner() {
     return Container(
-      key: _firstUnreadKey, // La clé pour scroller ici
+      key: _firstUnreadKey,
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
@@ -406,76 +470,86 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     );
   }
 
-
   @override
   Widget build(BuildContext context) {
     _keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F6FF),
+      backgroundColor: kBackground,
       appBar: buildAppleMissionAppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-        centerWidget: Row(
-          children: [
-            Stack(
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundImage: (otherPhoto != null && otherPhoto!.isNotEmpty)
-                      ? NetworkImage(otherPhoto!)
-                      : null,
-                  backgroundColor: Colors.white24,
-                  child: (otherPhoto == null || otherPhoto!.isEmpty)
-                      ? const Icon(Icons.person, color: Colors.white)
-                      : null,
-                ),
-                Positioned(
-                  bottom: 1,
-                  right: 1,
-                  child: Container(
-                    width: 9,
-                    height: 9,
-                    decoration: BoxDecoration(
-                      color: _isOnline ? Colors.greenAccent : Colors.grey,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 1.5),
+        centerWidget: SizedBox(
+          width: double.infinity,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              IconButton(
+                padding: const EdgeInsets.only(left: 8),
+                constraints: const BoxConstraints(),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
+              const SizedBox(width: 6),
+              Stack(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundImage: (otherPhoto != null && otherPhoto!.isNotEmpty)
+                        ? NetworkImage(otherPhoto!)
+                        : null,
+                    backgroundColor: Colors.white24,
+                    child: (otherPhoto == null || otherPhoto!.isEmpty)
+                        ? const Icon(Icons.person, color: Colors.white)
+                        : null,
+                  ),
+                  Positioned(
+                    bottom: 1,
+                    right: 1,
+                    child: Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: _isOnline ? Colors.greenAccent : Colors.grey,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5),
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  otherName ?? "",
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
+                ],
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: MediaQuery.of(context).size.width * 0.4,
+                    child: Text(
+                      otherName ?? "",
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
                   ),
-                ),
-                Text(
-                  _statusText(), // ✅ Statut 10/10
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
+                  Text(
+                    _statusText(),
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
       body: Column(
         children: [
-          // -------------------------------------------------------------
-          // 🔥 LISTE DES MESSAGES (Logique de scroll 10/10)
-          // -------------------------------------------------------------
+          if (_missionData != null) _buildMissionHeader(),
           Expanded(
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: FirebaseFirestore.instance
@@ -493,15 +567,12 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 }
                 final docs = snap.data!.docs;
 
-                // ✅ LOGIQUE WHATSAPP : Scroll au bon endroit
                 if (!_initialScrollDone) {
-                  _firstUnreadIndex = docs.indexWhere(
-                          (d) {
-                        final data = d.data();
-                        final readByList = (data['readBy'] as List?) ?? [];
-                        return data['from'] != user.uid && !readByList.contains(user.uid);
-                      }
-                  );
+                  _firstUnreadIndex = docs.indexWhere((d) {
+                    final data = d.data();
+                    final readByList = (data['readBy'] as List?) ?? [];
+                    return data['from'] != user.uid && !readByList.contains(user.uid);
+                  });
 
                   WidgetsBinding.instance.addPostFrameCallback((_) {
                     if (!_scrollCtrl.hasClients) return;
@@ -513,8 +584,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                         curve: Curves.easeIn,
                         alignment: 0.1,
                       );
-                    }
-                    else {
+                    } else {
                       _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
                     }
                     _initialScrollDone = true;
@@ -548,7 +618,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                         _buildBubble(
                           data,
                           isSameSenderAsPrevious,
-                          key: (i == _firstUnreadIndex) ? _firstUnreadKey : null,
                         ),
                       ],
                     );
@@ -557,7 +626,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
               },
             ),
           ),
-
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),
             transitionBuilder: (child, animation) {
@@ -585,56 +653,113 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
             )
                 : const SizedBox.shrink(key: ValueKey('no-badge')),
           ),
-
-          // -------------------------------------------------------------
-          // 🔥 INPUT MESSAGE (Avec performance "Typing")
-          // -------------------------------------------------------------
           SafeArea(
-            child: Container(
-              margin: const EdgeInsets.all(12),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(40),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.07),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3))
-                ],
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      focusNode: _focusNode,
-                      controller: _msgCtrl,
-                      minLines: 1,
-                      maxLines: 5,
-                      // ✅ AMÉLIORATION 10/10 : Utilise la fonction de "debounce"
-                      onChanged: _updateTypingStatus,
-                      decoration: const InputDecoration(
-                        hintText: "Écrire un message...",
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(vertical: 10),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.send_rounded, color: Color(0xFF6C63FF)),
-                    onPressed: _sendMessage,
-                  ),
-                ],
-              ),
-            ),
+            child: _isArchived
+                ? _buildArchivedInfoBar()
+                : _buildMessageInputBar(),
           ),
         ],
       ),
     );
   }
 
-  // --- "Estiquer" les bulles (Inchangé) ---
-  Widget _buildBubble(Map<String, dynamic> data, bool isSameSenderAsPrevious, {Key? key}) {
+  // -------------------------------------------------------------
+  // 🔗 HEADER MISSION
+  // -------------------------------------------------------------
+  Widget _buildMissionHeader() {
+    final m = _missionData ?? {};
+    final title = (m['title'] ?? 'Mission').toString();
+
+    final num? rawPrice =
+    (m['assignedPrice'] ?? m['budget']) as num?;
+    final String budgetText =
+    rawPrice != null ? "${rawPrice.toStringAsFixed(0)} €" : '';
+
+    final location = (m['location'] ?? m['city'] ?? '').toString();
+
+    return GestureDetector(
+      onTap: () {
+        if (_missionId == null) return;
+        context.push('/missions/${_missionId!}');
+      },
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black12.withOpacity(0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.work_outline_rounded,
+              color: Color(0xFF6C63FF),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      if (budgetText.isNotEmpty)
+                        Text(
+                          budgetText,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF6C63FF),
+                            fontSize: 13,
+                          ),
+                        ),
+                      if (budgetText.isNotEmpty && location.isNotEmpty)
+                        const SizedBox(width: 8),
+                      if (location.isNotEmpty)
+                        Flexible(
+                          child: Text(
+                            location,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Colors.grey,
+              size: 20,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --- BULLES ---
+  Widget _buildBubble(Map<String, dynamic> data, bool isSameSenderAsPrevious) {
     final isMe = data['from'] == user.uid;
     final ts = (data['sentAt'] as Timestamp?)?.toDate();
     final time = ts != null
@@ -663,12 +788,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     final double verticalMargin = isSameSenderAsPrevious ? 2 : 8;
 
     return Align(
-      key: key,
-      alignment:
-      isMe ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin:
-        EdgeInsets.symmetric(vertical: verticalMargin, horizontal: 10),
+        margin: EdgeInsets.symmetric(vertical: verticalMargin, horizontal: 10),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: isMe ? const Color(0xFF6C63FF) : Colors.white,
@@ -676,31 +798,34 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           boxShadow: [
             if (!isSameSenderAsPrevious)
               BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 6,
-                  offset: const Offset(2, 3))
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 6,
+                offset: const Offset(2, 3),
+              ),
           ],
         ),
         child: Column(
-          crossAxisAlignment: isMe
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
+          crossAxisAlignment:
+          isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
-            Text(data['text'] ?? '',
-                style: TextStyle(
-                    color:
-                    isMe ? Colors.white : Colors.black87,
-                    fontSize: 15)),
+            Text(
+              data['text'] ?? '',
+              style: TextStyle(
+                color: isMe ? Colors.white : Colors.black87,
+                fontSize: 15,
+              ),
+            ),
             const SizedBox(height: 4),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(time,
-                    style: TextStyle(
-                        color: isMe
-                            ? Colors.white70
-                            : Colors.black45,
-                        fontSize: 10)),
+                Text(
+                  time,
+                  style: TextStyle(
+                    color: isMe ? Colors.white70 : Colors.black45,
+                    fontSize: 10,
+                  ),
+                ),
                 if (isMe) ...[
                   const SizedBox(width: 6),
                   Icon(
@@ -710,11 +835,79 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                         ? Colors.lightBlueAccent
                         : Colors.white70,
                   ),
-                ]
+                ],
               ],
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildMessageInputBar() {
+    return Container(
+      margin: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(40),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.07),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              focusNode: _focusNode,
+              controller: _msgCtrl,
+              minLines: 1,
+              maxLines: 5,
+              onChanged: _updateTypingStatus,
+              decoration: const InputDecoration(
+                hintText: "Écrire un message...",
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(vertical: 10),
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.send_rounded, color: kPrimary),
+            onPressed: _sendMessage,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildArchivedInfoBar() {
+    return Container(
+      margin: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEF0F6),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          Icon(Icons.archive_rounded, color: kPrimary),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              "Discussion archivée\nLa mission est terminée. Vous pouvez relire les messages, mais vous ne pouvez plus en envoyer.",
+              style: TextStyle(
+                fontSize: 12,
+                color: Color(0xFF4A4A4A),
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

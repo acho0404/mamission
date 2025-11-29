@@ -10,11 +10,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_localizations: # <-- AJOUTEZ CETTE LIGNE
-    sdk: flutter         # <-- AJOUTEZ CETTE LIGNE
+
+  # --- INDISPENSABLE POUR LA ZONE D'INTERVENTION ---
+  http: ^1.1.0
+
+  # --- LOCALISATION (ALIGNE LE BIEN COMME ICI) ---
+  flutter_localizations:
+    sdk: flutter
 
 
-  shared_preferences: ^2.2.3 # (ou la dernière version)
 
   # --- Firebase core ---
   flutter_riverpod: ^2.5.0
@@ -28,7 +32,11 @@ dependencies:
   google_place: ^0.4.7
   intl: 0.20.2
   google_fonts: ^4.0.4
-
+  flutter_staggered_animations: ^1.1.1
+  # --- LES NOUVEAUX AJOUTS (Alignés avec 'flutter') ---
+  cached_network_image: ^3.3.0
+  photo_view: ^0.14.0
+  shared_preferences: ^2.2.3
 
   # --- Routing & UI ---
   go_router: ^14.2.0
@@ -44,7 +52,6 @@ dependencies:
   image_picker: ^1.1.2      # upload photo profil
 
   # --- Outils divers ---
-  http: ^0.13.6
   freezed_annotation: ^2.4.4
   flutter_local_notifications: ^18.0.1
   table_calendar: ^3.1.2 # <-- AJOUTEZ ÇA

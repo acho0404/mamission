@@ -1,890 +1,807 @@
-import 'dart:math' as math;
+import 'dart:io';
+import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:mamission/shared/apple_appbar.dart';
 
-class FinanceDashboardPage extends StatefulWidget {
-  const FinanceDashboardPage({super.key});
+// --- DATA & CONSTANTES ---
+const List<String> kAllSkills = [
+  '⚡ Électricité',
+  '🔧 Plomberie',
+  '🌿 Jardinage',
+  '🧹 Ménage',
+  '📦 Déménagement',
+  '🎨 Peinture',
+  '🔨 Montage meubles',
+  '📱 Tech Support',
+  '💻 Web Dev',
+  '🎓 Soutien Scolaire',
+  '🍼 Baby-sitting',
+  '🐶 Pet-sitting',
+];
+
+const Color kPrimary = Color(0xFF6C63FF);
+const Color kBackground = Color(0xFFF7F9FC);
+const Color kTextDark = Color(0xFF1A1D26);
+const Color kTextGrey = Color(0xFF9EA3AE);
+const Color kWhite = Colors.white;
+
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
 
   @override
-  State<FinanceDashboardPage> createState() => _FinanceDashboardPageState();
+  State<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _FinanceDashboardPageState extends State<FinanceDashboardPage>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _animCtrl;
-  late Animation<double> _fadeAnim;
-  late Animation<Offset> _slideAnim;
+class _ProfilePageState extends State<ProfilePage> {
+  final _auth = FirebaseAuth.instance;
+  final _db = FirebaseFirestore.instance;
+
+  final _nameCtrl = TextEditingController();
+  final _bioCtrl = TextEditingController();
+  final _cityCtrl = TextEditingController();
+  final _taglineCtrl = TextEditingController();
+
+  bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _animCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 550),
-    );
-    _fadeAnim = CurvedAnimation(parent: _animCtrl, curve: Curves.easeOut);
-    _slideAnim = Tween<Offset>(
-      begin: const Offset(0, 0.04),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic),
-    );
-
-    _animCtrl.forward();
+    initializeDateFormatting('fr_FR');
   }
 
-  @override
-  void dispose() {
-    _animCtrl.dispose();
-    super.dispose();
+  Future<void> _logout() async {
+    await _auth.signOut();
+    if (mounted) context.go('/login');
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    const kPrimary = Color(0xFF6C63FF);
+  Future<void> _pickAndUploadPhoto(String uid) async {
+    final picked = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, imageQuality: 80);
+    if (picked == null) return;
+    setState(() => _saving = true);
 
-    if (user == null) {
-      return const Scaffold(
-        body: Center(child: Text('Non connecté')),
-      );
+    final file = File(picked.path);
+    final ref = FirebaseStorage.instance.ref('users/$uid/profile_v2.jpg');
+    await ref.putFile(file);
+    final url = await ref.getDownloadURL();
+
+    await _db.collection('users').doc(uid).update({'photoUrl': url});
+    await _auth.currentUser?.updatePhotoURL(url);
+    setState(() => _saving = false);
+  }
+
+  Future<void> _saveProfile(
+      String uid,
+      List<String> skills,
+      bool isClient,
+      bool isProvider,
+      int radiusKm,
+      bool remoteAvailable,
+      ) async {
+    setState(() => _saving = true);
+    final newName = _nameCtrl.text.trim();
+    if (newName.isNotEmpty) {
+      await _auth.currentUser?.updateDisplayName(newName);
     }
 
-    final missionsRef = FirebaseFirestore.instance
-        .collection('missions')
-        .where('assignedTo', isEqualTo: user.uid);
+    await _db.collection('users').doc(uid).set(
+      {
+        'name': newName,
+        'bio': _bioCtrl.text.trim(),
+        'tagline': _taglineCtrl.text.trim(),
+        'city': _cityCtrl.text.trim(),
+        'skills': skills,
+        'isClient': isClient,
+        'isProvider': isProvider,
+        'radiusKm': radiusKm,
+        'remoteAvailable': remoteAvailable,
+        'updatedAt': FieldValue.serverTimestamp(),
+      },
+      SetOptions(merge: true),
+    );
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F5FF),
-      appBar: buildAppleMissionAppBar(
-        title: "Portefeuille",
-      ),
-      body: FadeTransition(
-        opacity: _fadeAnim,
-        child: SlideTransition(
-          position: _slideAnim,
-          child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: missionsRef.snapshots(),
-            builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: CircularProgressIndicator(color: kPrimary),
-                );
-              }
+    if (mounted) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✨ Profil mis à jour avec succès !'),
+          backgroundColor: kPrimary,
+        ),
+      );
+      setState(() => _saving = false);
+    }
+  }
 
-              if (snap.hasError) {
-                return Center(
-                  child: Text(
-                    "Erreur : ${snap.error}",
-                    style: const TextStyle(color: Colors.red),
+  void _openEditSheet(Map<String, dynamic> data, String uid) {
+    _nameCtrl.text = data['name'] ?? '';
+    _bioCtrl.text = data['bio'] ?? '';
+    _cityCtrl.text = data['city'] ?? '';
+    _taglineCtrl.text = data['tagline'] ?? '';
+
+    List<String> selectedSkills =
+        (data['skills'] as List?)?.cast<String>() ?? [];
+    bool isClient = data['isClient'] is bool ? data['isClient'] : true;
+    bool isProvider = data['isProvider'] is bool ? data['isProvider'] : false;
+    int radiusKm = (data['radiusKm'] is int) ? data['radiusKm'] : 10;
+    bool remoteAvailable = data['remoteAvailable'] == true;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.85,
+          minChildSize: 0.6,
+          maxChildSize: 0.95,
+          builder: (context, scrollController) {
+            return StatefulBuilder(
+              builder: (sheetContext, setSheetState) {
+                return Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius:
+                    BorderRadius.vertical(top: Radius.circular(28)),
                   ),
-                );
-              }
-
-              final docs = snap.data?.docs ?? [];
-
-              // ---- Calcul des stats financières ----
-              double totalCompleted = 0;
-              double totalInProgress = 0;
-              double totalPendingPayout = 0;
-
-              final now = DateTime.now();
-              final monthStart = DateTime(now.year, now.month, 1);
-
-              double thisMonthEarnings = 0;
-              int missionsCompletedCount = 0;
-              int missionsInProgressCount = 0;
-
-              // Pour le graphique (revenus sur les 7 derniers jours)
-              final Map<String, double> dailyEarnings = {};
-
-              for (final doc in docs) {
-                final data = doc.data();
-                final status = (data['status'] ?? '').toString();
-                final double price = ((data['assignedPrice'] ??
-                    data['agreedPrice'] ??
-                    data['budget'] ??
-                    0) as num)
-                    .toDouble();
-
-                // Date de référence pour earnings
-                final Timestamp? tsCompleted = data['completedAt'] as Timestamp?;
-                final Timestamp? tsUpdated = data['updatedAt'] as Timestamp?;
-                final Timestamp? tsCreated = data['createdAt'] as Timestamp?;
-                final DateTime refDate = (tsCompleted ??
-                    tsUpdated ??
-                    tsCreated ??
-                    Timestamp.now())
-                    .toDate();
-
-                if (status == 'completed' || status == 'paid') {
-                  totalCompleted += price;
-                  missionsCompletedCount++;
-
-                  if (refDate.isAfter(monthStart)) {
-                    thisMonthEarnings += price;
-                  }
-
-                  // Graphique 7 jours
-                  final dateKey = DateFormat('yyyy-MM-dd').format(refDate);
-                  dailyEarnings[dateKey] = (dailyEarnings[dateKey] ?? 0) + price;
-                } else if (status == 'in_progress') {
-                  totalInProgress += price;
-                  totalPendingPayout += price;
-                  missionsInProgressCount++;
-                } else if (status == 'pending_payment') {
-                  totalPendingPayout += price;
-                }
-              }
-
-              final availableBalance = totalCompleted; // à adapter plus tard si besoin
-
-              // Prépare les points du graphique (7 derniers jours)
-              final List<_EarningPoint> points = [];
-              for (int i = 6; i >= 0; i--) {
-                final day = now.subtract(Duration(days: i));
-                final key = DateFormat('yyyy-MM-dd').format(day);
-                final amount = dailyEarnings[key] ?? 0;
-                points.add(_EarningPoint(day, amount));
-              }
-
-              return RefreshIndicator(
-                onRefresh: () async {
-                  // simple "no-op" : le StreamBuilder se mettra à jour tout seul
-                  await Future<void>.delayed(const Duration(milliseconds: 200));
-                },
-                child: CustomScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                        child: _HeaderCard(
-                          available: availableBalance,
-                          pending: totalPendingPayout,
-                          thisMonth: thisMonthEarnings,
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 12),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(999),
                         ),
                       ),
-                    ),
-
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20.0),
-                        child: _StatsGrid(
-                          missionsInProgress: missionsInProgressCount,
-                          missionsCompleted: missionsCompletedCount,
-                          thisMonth: thisMonthEarnings,
-                          totalEarned: totalCompleted,
-                        ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        "Modifier ma vitrine",
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
                       ),
-                    ),
-
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                        child: _EarningsChartCard(points: points),
-                      ),
-                    ),
-
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      Expanded(
+                        child: ListView(
+                          controller: scrollController,
+                          padding: const EdgeInsets.all(24),
                           children: [
-                            const Text(
-                              "Transactions récentes",
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 16,
+                            _EditInput(
+                                ctrl: _nameCtrl,
+                                label: "Nom d'affichage",
+                                icon: Icons.person_outline),
+                            const SizedBox(height: 16),
+                            _EditInput(
+                                ctrl: _taglineCtrl,
+                                label: "Accroche (ex: Expert Plombier)",
+                                icon: Icons.flash_on_outlined),
+                            const SizedBox(height: 16),
+                            _EditInput(
+                                ctrl: _cityCtrl,
+                                label: "Ville",
+                                icon: Icons.location_on_outlined),
+                            const SizedBox(height: 16),
+                            _EditInput(
+                                ctrl: _bioCtrl,
+                                label: "À propos de vous",
+                                icon: Icons.history_edu,
+                                maxLines: 4),
+                            const SizedBox(height: 24),
+                            const Text("Compétences",
+                                style: TextStyle(fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: kAllSkills.map((skill) {
+                                final isSel = selectedSkills.contains(skill);
+                                return FilterChip(
+                                  label: Text(skill),
+                                  selected: isSel,
+                                  onSelected: (v) {
+                                    setSheetState(() => v
+                                        ? selectedSkills.add(skill)
+                                        : selectedSkills.remove(skill));
+                                  },
+                                  backgroundColor: kBackground,
+                                  selectedColor: kPrimary.withOpacity(0.15),
+                                  labelStyle: TextStyle(
+                                      color: isSel ? kPrimary : kTextDark),
+                                  checkmarkColor: kPrimary,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                      side: BorderSide.none),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(height: 32),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: _saving
+                                    ? null
+                                    : () => _saveProfile(
+                                  uid,
+                                  selectedSkills,
+                                  isClient,
+                                  isProvider,
+                                  radiusKm,
+                                  remoteAvailable,
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: kPrimary,
+                                  padding:
+                                  const EdgeInsets.symmetric(vertical: 16),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16)),
+                                ),
+                                child: _saving
+                                    ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2),
+                                )
+                                    : const Text("Enregistrer",
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold)),
                               ),
                             ),
-                            Text(
-                              "Voir tout",
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey.shade600,
-                                decoration: TextDecoration.underline,
-                              ),
-                            ),
+                            const SizedBox(height: 40),
                           ],
                         ),
                       ),
-                    ),
-
-                    SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                            (context, index) {
-                          if (index >= math.min(10, docs.length)) {
-                            return null;
-                          }
-                          final doc = docs[index];
-                          final data = doc.data();
-                          return Padding(
-                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                            child: _TransactionTile(data: data),
-                          );
-                        },
-                      ),
-                    ),
-
-                    const SliverToBoxAdapter(
-                      child: SizedBox(height: 32),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ),
-      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// HEADER CARD
-// ---------------------------------------------------------------------------
-
-class _HeaderCard extends StatelessWidget {
-  final double available;
-  final double pending;
-  final double thisMonth;
-
-  const _HeaderCard({
-    required this.available,
-    required this.pending,
-    required this.thisMonth,
-  });
 
   @override
   Widget build(BuildContext context) {
-    const kPrimary = Color(0xFF6C63FF);
-    final currencyFormat = NumberFormat.currency(locale: 'fr_FR', symbol: '€');
+    final user = _auth.currentUser;
+    if (user == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [kPrimary, Color(0xFF8A7FFC)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.16),
-            blurRadius: 14,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.account_balance_wallet_rounded,
-                  color: Colors.white, size: 22),
-              const SizedBox(width: 8),
-              Text(
-                "Solde disponible",
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.9),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
+    return Scaffold(
+      backgroundColor: kBackground,
+      appBar: buildAppleMissionAppBar(title: "Mon Profil"),
+      body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: _db.collection('users').doc(user.uid).snapshots(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final data = snapshot.data!.data() ?? {};
+          final name = data['name'] ?? 'Utilisateur';
+          final tagline = data['tagline'] ?? 'Membre MaMission';
+          final photoUrl = data['photoUrl'];
+          final isVerified = data['idVerified'] == true;
+
+          double balance = 0.0;
+          if (data['walletBalance'] is num) {
+            balance = (data['walletBalance'] as num).toDouble();
+          }
+          final soldeStr = balance.toStringAsFixed(2);
+
+          Timestamp? memberTs = data['memberSince'] as Timestamp?;
+          if (memberTs == null && user.metadata.creationTime != null) {
+            memberTs = Timestamp.fromDate(user.metadata.creationTime!);
+          }
+          final memberDate = memberTs?.toDate() ?? DateTime.now();
+          final memberLabel =
+          DateFormat.yMMMM('fr_FR').format(memberDate);
+
+          return SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 50),
+            child: Column(
+              children: [
+                const SizedBox(height: 10),
+
+                // Bouton notif (mobile réglages, pas stats)
+                Row(
                   children: [
-                    Icon(Icons.shield_moon_outlined,
-                        size: 14, color: Colors.white.withOpacity(0.9)),
-                    const SizedBox(width: 4),
-                    Text(
-                      "Sécurisé",
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
+                    const Spacer(),
+                    _NotifCircleButton(
+                      onTap: () {
+                        // TODO: route notifications
+                      },
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+
+                _ProfileHeaderHighEnd(
+                  name: name,
+                  tagline: tagline,
+                  photoUrl: photoUrl,
+                  isVerified: isVerified,
+                  onTapAvatar: () => _pickAndUploadPhoto(user.uid),
+                ),
+
+                const SizedBox(height: 20),
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ActionButton(
+                        label: "Voir ma vitrine",
+                        icon: Icons.visibility_outlined,
+                        isPrimary: true,
+                        onTap: () => context.push(
+                          '/profile/public',
+                          extra: {'userId': user.uid},
+                        ),
                       ),
                     ),
                   ],
                 ),
-              )
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(
-            currencyFormat.format(available),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 32,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.2,
+
+                const SizedBox(height: 28),
+
+                // ESPACE PRIVÉ
+                const _SectionHeader(title: "ESPACE PRIVÉ & VÉRIFICATIONS"),
+                _MenuCard(
+                  children: [
+                    _MenuRow(
+                      icon: Icons.fingerprint_rounded,
+                      title: "Identité & Vérification",
+                      subtitle: isVerified
+                          ? "Compte vérifié"
+                          : "Action requise",
+                      statusColor:
+                      isVerified ? Colors.green : Colors.orange,
+                      onTap: () {
+                        // Navigation vers une page placeholder ou settings
+                        context.push('/settings/kyc');
+                      },
+                    ),
+                    const _MenuDivider(),
+                    _MenuRow(
+                      icon: Icons.phone_iphone_rounded,
+                      title: "Coordonnées",
+                      subtitle: "Tél, Email, Adresse",
+                      onTap: () {
+                        context.push('/settings/contact');
+                      },
+                    ),
+                    const _MenuDivider(),
+                    _MenuRow(
+                      icon: Icons.lock_outline_rounded,
+                      title: "Connexion & Sécurité",
+                      subtitle: "Mot de passe, FaceID",
+                      onTap: () {
+                        context.push('/settings/security');
+                      },
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 24),
+
+                const _SectionHeader(title: "FINANCES"),
+                _MenuCard(
+                  children: [
+                    _MenuRow(
+                      icon: Icons.account_balance_wallet_rounded,
+                      title: "Mon Portefeuille",
+                      trailing: Text(
+                        "$soldeStr €",
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                          color: kTextDark,
+                        ),
+                      ),
+                      onTap: () => context.push('/payments'),
+                    ),
+                    const _MenuDivider(),
+                    _MenuRow(
+                      icon: Icons.credit_card_rounded,
+                      title: "Moyens de paiement",
+                      subtitle: "Cartes & IBAN",
+                      onTap: () => context.push('/payments'),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 24),
+                TextButton(
+                  onPressed: _logout,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 12, horizontal: 24),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    backgroundColor: Colors.red.withOpacity(0.05),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.logout_rounded, size: 18),
+                      SizedBox(width: 8),
+                      Text("Me déconnecter",
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+                Text(
+                  "Membre depuis $memberLabel",
+                  style: TextStyle(
+                    color: kTextGrey.withOpacity(0.6),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              _HeaderPill(
-                label: "En attente",
-                value: currencyFormat.format(pending),
-              ),
-              const SizedBox(width: 8),
-              _HeaderPill(
-                label: "Ce mois-ci",
-                value: currencyFormat.format(thisMonth),
-              ),
-            ],
-          ),
-        ],
+          );
+        },
       ),
     );
   }
 }
 
-class _HeaderPill extends StatelessWidget {
-  final String label;
-  final String value;
+// ================== WIDGETS UI ==================
 
-  const _HeaderPill({required this.label, required this.value});
+class _ProfileHeaderHighEnd extends StatelessWidget {
+  final String name;
+  final String tagline;
+  final String? photoUrl;
+  final bool isVerified;
+  final VoidCallback onTapAvatar;
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding:
-      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.14),
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Row(
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.9),
-              fontSize: 11,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: 12,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// STATS GRID (petites cartes)
-// ---------------------------------------------------------------------------
-
-class _StatsGrid extends StatelessWidget {
-  final int missionsInProgress;
-  final int missionsCompleted;
-  final double thisMonth;
-  final double totalEarned;
-
-  const _StatsGrid({
-    required this.missionsInProgress,
-    required this.missionsCompleted,
-    required this.thisMonth,
-    required this.totalEarned,
+  const _ProfileHeaderHighEnd({
+    required this.name,
+    required this.tagline,
+    required this.photoUrl,
+    required this.isVerified,
+    required this.onTapAvatar,
   });
 
   @override
   Widget build(BuildContext context) {
-    final numberFormat = NumberFormat.compactCurrency(
-      locale: 'fr_FR',
-      symbol: '€',
-      decimalDigits: 1,
-    );
-
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 18),
-        const Text(
-          "Résumé",
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
+        GestureDetector(
+          onTap: onTapAvatar,
+          child: Stack(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 4),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: CircleAvatar(
+                  radius: 50,
+                  backgroundColor: Colors.grey[200],
+                  backgroundImage:
+                  photoUrl != null ? NetworkImage(photoUrl!) : null,
+                  child: photoUrl == null
+                      ? const Icon(Icons.person,
+                      size: 40, color: Colors.grey)
+                      : null,
+                ),
+              ),
+              if (isVerified)
+                Positioned(
+                  bottom: 2,
+                  right: 2,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                        color: Colors.white, shape: BoxShape.circle),
+                    child: const Icon(Icons.verified,
+                        color: kPrimary, size: 22),
+                  ),
+                ),
+            ],
           ),
         ),
-        const SizedBox(height: 10),
-        GridView.count(
-          crossAxisCount: 2,
-          childAspectRatio: 1.7,
-          shrinkWrap: true,
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          physics: const NeverScrollableScrollPhysics(),
-          children: [
-            _StatCard(
-              icon: Icons.trending_up_rounded,
-              iconBg: const Color(0xFFEFF3FF),
-              title: "Revenus ce mois",
-              value: numberFormat.format(thisMonth),
-              subtitle: "Basé sur les missions terminées",
-            ),
-            _StatCard(
-              icon: Icons.emoji_events_outlined,
-              iconBg: const Color(0xFFFFF4E5),
-              title: "Total gagné",
-              value: numberFormat.format(totalEarned),
-              subtitle: "Depuis vos débuts",
-            ),
-            _StatCard(
-              icon: Icons.work_outline_rounded,
-              iconBg: const Color(0xFFE9FBF1),
-              title: "Missions en cours",
-              value: missionsInProgress.toString(),
-              subtitle: "En statut \"En cours\"",
-            ),
-            _StatCard(
-              icon: Icons.check_circle_outline_rounded,
-              iconBg: const Color(0xFFFBE9FF),
-              title: "Missions complétées",
-              value: missionsCompleted.toString(),
-              subtitle: "Prêtes à être notées",
-            ),
-          ],
+        const SizedBox(height: 16),
+        Text(
+          name,
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: kTextDark,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          tagline,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: kTextGrey,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ],
     );
   }
 }
 
-class _StatCard extends StatelessWidget {
+class _ActionButton extends StatelessWidget {
+  final String label;
   final IconData icon;
-  final Color iconBg;
-  final String title;
-  final String value;
-  final String subtitle;
+  final bool isPrimary;
+  final VoidCallback onTap;
 
-  const _StatCard({
+  const _ActionButton({
+    required this.label,
     required this.icon,
-    required this.iconBg,
-    required this.title,
-    required this.value,
-    required this.subtitle,
+    required this.isPrimary,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    const borderRadius = 18.0;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(borderRadius),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
+    final color = isPrimary ? kPrimary : Colors.white;
+    final textColor = isPrimary ? Colors.white : kTextDark;
+
+    return Material(
+      color: color,
+      borderRadius: BorderRadius.circular(16),
+      elevation: isPrimary ? 4 : 0,
+      shadowColor:
+      isPrimary ? kPrimary.withOpacity(0.4) : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          decoration: isPrimary
+              ? null
+              : BoxDecoration(
+            border: Border.all(color: const Color(0xFFE0E0E0)),
+            borderRadius: BorderRadius.circular(16),
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            decoration: BoxDecoration(
-              color: iconBg,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, size: 18, color: const Color(0xFF6C63FF)),
-          ),
-          const Spacer(),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade700,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF2F2E41),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 11,
-              color: Colors.grey.shade500,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// EARNINGS CHART
-// ---------------------------------------------------------------------------
-
-class _EarningPoint {
-  final DateTime date;
-  final double value;
-
-  _EarningPoint(this.date, this.value);
-}
-
-class _EarningsChartCard extends StatelessWidget {
-  final List<_EarningPoint> points;
-
-  const _EarningsChartCard({required this.points});
-
-  @override
-  Widget build(BuildContext context) {
-    final maxValue = points.isEmpty
-        ? 0.0
-        : points.map((e) => e.value).reduce(math.max);
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                "Évolution des revenus",
+              Icon(icon, size: 18, color: textColor),
+              const SizedBox(width: 8),
+              Text(
+                label,
                 style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF1EEFF),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: const [
-                    Icon(Icons.timeline_rounded,
-                        size: 14, color: Color(0xFF6C63FF)),
-                    SizedBox(width: 4),
-                    Text(
-                      "7 derniers jours",
-                      style: TextStyle(
-                        color: Color(0xFF6C63FF),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+                  color: textColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            maxValue == 0
-                ? "Les revenus apparaîtront ici une fois des missions terminées."
-                : "Vue simplifiée de vos gains récents.",
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade600,
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 140,
-            child: CustomPaint(
-              painter: _EarningsPainter(points),
-              child: Container(),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              for (final p in points)
-                Expanded(
-                  child: Text(
-                    DateFormat('E', 'fr_FR').format(p.date)[0],
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey.shade500,
-                    ),
-                  ),
-                ),
-            ],
-          )
-        ],
+        ),
       ),
     );
   }
 }
 
-class _EarningsPainter extends CustomPainter {
-  final List<_EarningPoint> points;
-
-  _EarningsPainter(this.points);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (points.isEmpty) return;
-
-    final maxVal = points
-        .map((e) => e.value)
-        .fold<double>(0, (prev, element) => math.max(prev, element));
-
-    final double padding = 8.0;
-
-    final linePaint = Paint()
-      ..color = const Color(0xFF6C63FF)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round;
-
-    final fillPaint = Paint()
-      ..shader = const LinearGradient(
-        colors: [
-          Color(0xFF6C63FF),
-          Color(0xFF6C63FF),
-        ],
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
-      ..style = PaintingStyle.fill
-      ..color = const Color(0xFF6C63FF).withOpacity(0.12);
-
-    final path = Path();
-    final fillPath = Path();
-
-    final int n = points.length;
-    if (n < 2) return;
-
-    double dx(int i) {
-      if (n == 1) return size.width / 2;
-      return padding +
-          (size.width - 2 * padding) * (i / (n - 1));
-    }
-
-    double dy(double v) {
-      if (maxVal == 0) {
-        return size.height / 2;
-      }
-      final normalized = v / maxVal;
-      return padding + (1 - normalized) * (size.height - 2 * padding);
-    }
-
-    // Build line path
-    for (int i = 0; i < n; i++) {
-      final x = dx(i);
-      final y = dy(points[i].value);
-      if (i == 0) {
-        path.moveTo(x, y);
-        fillPath.moveTo(x, size.height - padding);
-        fillPath.lineTo(x, y);
-      } else {
-        path.lineTo(x, y);
-        fillPath.lineTo(x, y);
-      }
-    }
-
-    // Close fill path
-    fillPath.lineTo(dx(n - 1), size.height - padding);
-    fillPath.close();
-
-    canvas.drawPath(fillPath, fillPaint);
-    canvas.drawPath(path, linePaint);
-
-    // Points
-    final pointPaint = Paint()
-      ..color = const Color(0xFF6C63FF)
-      ..style = PaintingStyle.fill;
-
-    for (int i = 0; i < n; i++) {
-      final x = dx(i);
-      final y = dy(points[i].value);
-      canvas.drawCircle(Offset(x, y), 3.2, pointPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _EarningsPainter oldDelegate) {
-    return oldDelegate.points != points;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// TRANSACTION TILE
-// ---------------------------------------------------------------------------
-
-class _TransactionTile extends StatelessWidget {
-  final Map<String, dynamic> data;
-
-  const _TransactionTile({required this.data});
+class _NotifCircleButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _NotifCircleButton({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final status = (data['status'] ?? '').toString();
-    final title = (data['title'] ?? 'Mission').toString();
-    final double amount = ((data['assignedPrice'] ??
-        data['agreedPrice'] ??
-        data['budget'] ??
-        0) as num)
-        .toDouble();
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFFE5E5EA)),
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.notifications_none_rounded,
+            size: 22,
+            color: kTextDark,
+          ),
+        ),
+      ),
+    );
+  }
+}
 
-    final Timestamp? ts = data['completedAt'] ??
-        data['updatedAt'] ??
-        data['createdAt'];
-    final date = (ts is Timestamp) ? ts.toDate() : DateTime.now();
-    final dateLabel = DateFormat('d MMM, HH:mm', 'fr_FR').format(date);
+class _MenuCard extends StatelessWidget {
+  final List<Widget> children;
+  const _MenuCard({required this.children});
 
-    Color badgeColor;
-    String badgeText;
-
-    switch (status) {
-      case 'completed':
-      case 'paid':
-        badgeColor = Colors.green.shade50;
-        badgeText = "Payé";
-        break;
-      case 'in_progress':
-        badgeColor = Colors.blue.shade50;
-        badgeText = "En cours";
-        break;
-      case 'pending_payment':
-        badgeColor = Colors.orange.shade50;
-        badgeText = "En attente";
-        break;
-      default:
-        badgeColor = Colors.grey.shade100;
-        badgeText = status.isEmpty ? "N/A" : status;
-    }
-
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1EEFF),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.work_outline_rounded,
-                color: Color(0xFF6C63FF), size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  dateLabel,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                "${amount.toStringAsFixed(amount.truncateToDouble() == amount ? 0 : 2)} €",
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF2F2E41),
-                  fontSize: 14,
-                ),
+      child: Column(children: children),
+    );
+  }
+}
+
+class _MenuRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
+  final Color? statusColor;
+  final VoidCallback onTap;
+
+  const _MenuRow({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+    this.statusColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding:
+        const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: kBackground,
+                borderRadius: BorderRadius.circular(10),
               ),
-              const SizedBox(height: 4),
-              Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: badgeColor,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  badgeText,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.grey.shade800,
-                    fontWeight: FontWeight.w500,
+              child: Icon(icon, color: kTextDark, size: 20),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: kTextDark,
+                    ),
                   ),
-                ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: statusColor ?? kTextGrey,
+                        fontWeight: statusColor != null
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          )
-        ],
+            ),
+            if (trailing != null) trailing!,
+            if (trailing == null)
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFFE0E0E0),
+                size: 22,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  const _SectionHeader({required this.title});
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 12, bottom: 8, top: 4),
+        child: Text(
+          title,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: kTextGrey,
+            letterSpacing: 1.0,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuDivider extends StatelessWidget {
+  const _MenuDivider();
+  @override
+  Widget build(BuildContext context) {
+    return const Divider(
+      height: 1,
+      indent: 60,
+      color: Color(0xFFF0F0F0),
+    );
+  }
+}
+
+class _EditInput extends StatelessWidget {
+  final TextEditingController ctrl;
+  final String label;
+  final IconData icon;
+  final int maxLines;
+  const _EditInput({
+    required this.ctrl,
+    required this.label,
+    required this.icon,
+    this.maxLines = 1,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: ctrl,
+      maxLines: maxLines,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: kTextGrey),
+        filled: true,
+        fillColor: kBackground,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide.none,
+        ),
       ),
     );
   }

@@ -1,71 +1,237 @@
-import * as functions from "firebase-functions/v2";
-import { onRequest, onCall } from "firebase-functions/v2/https";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
-import Stripe from "stripe";
 
-// Initialisation Firebase
 admin.initializeApp();
 
-// Initialisation Stripe (clé lue dans les variables d’environnement)
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-  apiVersion: "2024-06-20" as any,
+const db = admin.firestore();
+
+/* ---------------------------------------------------------------------------
+ 🔥 AUTO-CLOSE MISSION LORSQUE LES 2 AVIS SONT POSTÉS
+--------------------------------------------------------------------------- */
+export const autoCloseMission = onDocumentCreated("reviews/{id}", async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+
+  const data = snap.data();
+  const missionId = data.missionId;
+  const reviewerId = data.reviewerId;
+  if (!missionId) return;
+
+  console.log("⭐ Nouvel avis pour la mission:", missionId);
+
+  const reviewsSnap = await db
+    .collection("reviews")
+    .where("missionId", "==", missionId)
+    .get();
+
+  const totalReviews = reviewsSnap.size;
+
+  const duplicates = reviewsSnap.docs.filter(
+    (d) => d.data().reviewerId === reviewerId
+  );
+  if (duplicates.length > 1) {
+    console.log("⛔ Avis en double → ignoré");
+    return;
+  }
+
+  if (totalReviews < 2) {
+    console.log("⏳ Pas encore 2 avis (actuels:", totalReviews, ")");
+    return;
+  }
+
+  const missionRef = db.collection("missions").doc(missionId);
+  const missionSnap = await missionRef.get();
+  if (!missionSnap.exists) return;
+
+  const mission = missionSnap.data() || {};
+  const clientId = mission.posterId;
+  const providerId = mission.assignedTo;
+
+  await missionRef.update({
+    status: "closed",
+    closedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  console.log("✅ Mission automatiquement fermée:", missionId);
+
+  const notifCol = db.collection("notifications");
+  const base = {
+    type: "reviews_completed",
+    title: "Avis complétés 🎉",
+    body: "Votre mission est maintenant terminée.",
+    extra: {
+      missionId,
+      missionTitle: mission.title || "",
+    },
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    read: false,
+  };
+
+  if (clientId) {
+    const doc = notifCol.doc();
+    await doc.set({
+      ...base,
+      userId: clientId,
+      id: doc.id,
+    });
+  }
+
+  if (providerId) {
+    const doc = notifCol.doc();
+    await doc.set({
+      ...base,
+      userId: providerId,
+      id: doc.id,
+    });
+  }
+
+  console.log("📨 Notifs Firestore créées.");
 });
 
-// -----------------------------------------------------------------------------
-// 🧾 Fonction HTTPS callable pour créer un PaymentIntent
-// -----------------------------------------------------------------------------
-export const createPaymentIntent = onCall(
-  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
-  async (request) => {
-    const amount = Number(request.data.amount);
-    const currency = (request.data.currency || "eur").toString();
-    const description = (request.data.description || "Mission payment").toString();
+/* ---------------------------------------------------------------------------
+ 🔥 NOTIF AUTOMATIQUE SUR NOUVEAU MESSAGE DE CHAT
+--------------------------------------------------------------------------- */
+export const onNewChatMessage = onDocumentCreated(
+  "chats/{chatId}/messages/{messageId}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
 
-    if (!amount || amount <= 0) {
-      throw new functions.https.HttpsError("invalid-argument", "Montant invalide");
-    }
+    const data = snap.data() as any;
+    const chatId = event.params.chatId as string;
+    const fromUserId = data.from as string | undefined;
+    const text = (data.text as string | undefined) || "";
 
-    const intent = await stripe.paymentIntents.create({
-      amount,
-      currency,
-      description,
-      automatic_payment_methods: { enabled: true },
-    });
-
-    return { clientSecret: intent.client_secret };
-  }
-);
-
-// -----------------------------------------------------------------------------
-// 🧾 Webhook Stripe (reçoit les événements Stripe → Firestore ou logs)
-// -----------------------------------------------------------------------------
-export const stripeWebhook = onRequest(
-  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
-  async (req, res) => {
-    const sig = req.headers["stripe-signature"] as string;
-    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET as string;
-    let event: Stripe.Event;
-
-    try {
-      event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
-    } catch (err: any) {
-      console.error("⚠️ Signature Stripe invalide :", err.message);
-      res.status(400).send(`Webhook Error: ${err.message}`);
+    if (!fromUserId || !text) {
+      console.log("⚠️ Message de chat incomplet, on skip.");
       return;
     }
 
-    switch (event.type) {
-      case "payment_intent.succeeded":
-        console.log("✅ Paiement réussi :", event.data.object["id"]);
-        // TODO: mettre à jour la mission Firestore ici
-        break;
-      case "payment_intent.payment_failed":
-        console.log("❌ Paiement échoué :", event.data.object["id"]);
-        break;
-      default:
-        console.log("ℹ️ Événement Stripe :", event.type);
+    console.log("💬 Nouveau message dans le chat:", chatId);
+
+    // 1️⃣ Récupérer le chat
+    const chatSnap = await db.collection("chats").doc(chatId).get();
+    if (!chatSnap.exists) {
+      console.log("⚠️ Chat inexistant:", chatId);
+      return;
     }
 
-    res.json({ received: true });
+    const chat = chatSnap.data() || {};
+
+    const rawUsers =
+      (chat as any).users ||
+      (chat as any).usersIds ||
+      (chat as any).participants ||
+      [];
+
+    // ✅ on force bien un tableau de string
+    const participants = Array.from(rawUsers || []) as string[];
+
+    const notifCol = db.collection("notifications");
+
+    const userNames = (chat as any).userNames || {};
+    const senderName = userNames[fromUserId] || "Nouveau message";
+
+    const snippet =
+      text.length > 80 ? text.substring(0, 77) + "..." : text;
+
+    // 2️⃣ Pour chaque participant ≠ émetteur, créer une notif Firestore
+    const promises = participants
+      .filter((uid: string) => uid !== fromUserId)
+      .map(async (toUserId: string) => {
+        const userSnap = await db
+          .collection("users")
+          .doc(toUserId)
+          .get();
+
+        if (!userSnap.exists) return;
+
+        const user = userSnap.data() || {};
+        const activeChatId = user.activeChatId as string | undefined;
+
+        // ✅ Si l'utilisateur est déjà DANS ce chat → pas de push
+        if (activeChatId === chatId) {
+          console.log(
+            `👀 User ${toUserId} est déjà dans le chat ${chatId}, pas de notif.`
+          );
+          return;
+        }
+
+        const doc = notifCol.doc();
+        await doc.set({
+          id: doc.id,
+          userId: toUserId,
+          type: "chat_message",
+          title: senderName,
+          body: snippet,
+          extra: {
+            chatId,
+            fromUserId,
+          },
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          read: false,
+        });
+
+        console.log("📝 Notif Firestore chat_message créée pour", toUserId);
+      });
+
+    await Promise.all(promises);
+
+    console.log("✅ onNewChatMessage terminé pour chat", chatId);
+  }
+);
+
+/* ---------------------------------------------------------------------------
+ 🔥 PUSH FCM SUR NOUVELLE NOTIF FIRESTORE
+--------------------------------------------------------------------------- */
+export const sendPushOnNotificationCreate = onDocumentCreated(
+  "notifications/{id}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+
+    const notif = snap.data();
+    const userId = notif.userId;
+    if (!userId) {
+      console.log("⚠️ Notification sans userId, ignorée.");
+      return;
+    }
+
+    const title = notif.title;
+    const body = notif.body;
+    const type = notif.type;
+    const extra = notif.extra || {};
+
+    console.log("📬 Nouvelle notif Firestore → PUSH pour", userId);
+
+    const userDoc = await db.collection("users").doc(userId).get();
+    const token = userDoc.get("fcmToken");
+
+    if (!token) {
+      console.log("⚠️ Pas de token FCM pour", userId);
+      return;
+    }
+
+    const message = {
+      token,
+      notification: {
+        title: title || "Notification",
+        body: body || "",
+      },
+      data: {
+        type: type || "",
+        missionId: extra.missionId || "",
+        missionTitle: extra.missionTitle || "",
+        chatId: extra.chatId || "",
+        fromUserId: extra.fromUserId || "",
+      },
+    };
+
+    try {
+      await admin.messaging().send(message);
+      console.log("📨 PUSH envoyé à", userId);
+    } catch (err) {
+      console.error("❌ Erreur envoi push:", err);
+    }
   }
 );

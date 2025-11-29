@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui'; // Pour le flou (Glassmorphism)
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -9,11 +10,100 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_place/google_place.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:flutter/services.dart';
+// -----------------------------------------------------------------------------
+// THEME FUTURISTE CLAIR (Light Cyberpunk)
+// -----------------------------------------------------------------------------
+class AppTheme {
+  // Fonds clairs
+  static const Color bgLight = Color(0xFFF3F6FF); // Blanc cassé légèrement bleuté
+  static const Color cardLight = Colors.white;
 
-import 'package:mamission/shared/apple_appbar.dart';
+  // Accents vibrants
+  static const Color neonPrimary = Color(0xFF6C63FF); // Violet électrique
+  static const Color neonCyan = Color(0xFF00B8D4);   // Cyan un peu plus soutenu pour le contraste
+
+  // Textes foncés
+  static const Color textDark = Color(0xFF1A1F36);   // Presque noir
+  static const Color textGrey = Color(0xFF6E7787);   // Gris moyen
+
+  // Box style "Glass" pour fond clair
+  static BoxDecoration glassBox() {
+    return BoxDecoration(
+      color: Colors.white.withOpacity(0.7), // Blanc translucide
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(color: Colors.white), // Bordure blanche nette
+      boxShadow: [
+        BoxShadow(
+          color: const Color(0xFF6C63FF).withOpacity(0.1), // Ombre violette très douce
+          blurRadius: 20,
+          offset: const Offset(0, 10),
+        ),
+      ],
+    );
+  }
+
+  // Ombre portée colorée pour les boutons/sélections
+  static List<BoxShadow> coloredShadow(Color color) {
+    return [
+      BoxShadow(
+        color: color.withOpacity(0.3),
+        blurRadius: 12,
+        offset: const Offset(0, 6),
+      ),
+    ];
+  }
+}
+
+// -----------------------------------------------------------------------------
+// WIDGET D'ANIMATION PERSONNALISÉ (Apparition en glissant)
+// -----------------------------------------------------------------------------
+class FadeInSlide extends StatefulWidget {
+  final Widget child;
+  final double delay;
+
+  const FadeInSlide({super.key, required this.child, this.delay = 0});
+
+  @override
+  State<FadeInSlide> createState() => _FadeInSlideState();
+}
+
+class _FadeInSlideState extends State<FadeInSlide> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _fadeAnim;
+  late Animation<Offset> _slideAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
+    _fadeAnim = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+    _slideAnim = Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutQuart));
+
+    Future.delayed(Duration(milliseconds: (widget.delay * 1000).round()), () {
+      if (mounted) _controller.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fadeAnim,
+      child: SlideTransition(position: _slideAnim, child: widget.child),
+    );
+  }
+}
+
 
 class MissionCreatePage extends StatefulWidget {
   final String? editMissionId;
@@ -23,92 +113,55 @@ class MissionCreatePage extends StatefulWidget {
   State<MissionCreatePage> createState() => _MissionCreatePageState();
 }
 
-class _MissionCreatePageState extends State<MissionCreatePage>
-    with SingleTickerProviderStateMixin {
-  // --- DESIGN TOKENS MAMISSION ---
-  static const Color _bgGradientTop = Color(0xFF6C63FF);
-  static const Color _bgGradientBottom = Color(0xFF9381FF);
-  static const Color _cardBackground = Colors.white;
-  static const Color _primaryText = Color(0xFF111827);
-  static const Color _secondaryText = Color(0xFF6B7280);
-  static const Color _accent = Color(0xFF6C63FF);
-  static const Color _accentSoft = Color(0xFFB59CFF);
-  static const Color _border = Color(0xFFE5E7EB);
-  static const Color _chipBg = Color(0xFFF3F4F6);
-
-  // --- ETAPES ---
-  static const int _totalSteps = 4;
-  final List<String> _stepTitles = const [
-    "Décrire",
-    "Budget",
-    "Lieu",
-    "Date",
-  ];
-  final List<String> _stepSubtitles = const [
-    "Titre, catégorie, description",
-    "Durée, budget, photo",
-    "Adresse et mode",
-    "Jour et flexibilité",
-  ];
-  final List<IconData> _stepIcons = const [
-    Icons.notes_rounded,
-    Icons.euro_rounded,
-    Icons.place_rounded,
-    Icons.calendar_month_rounded,
-  ];
-
-  int _currentStep = 0;
-
-  // --- CONTROLLERS FORM ---
+class _MissionCreatePageState extends State<MissionCreatePage> {
+  // ---------------------------------------------------------------------------
+  // CONTROLLERS & STATE
+  // ---------------------------------------------------------------------------
   final _formKey = GlobalKey<FormState>();
+  final PageController _pageController = PageController();
 
-  final TextEditingController _titleCtrl = TextEditingController();
-  final TextEditingController _descCtrl = TextEditingController();
-  final TextEditingController _budgetCtrl = TextEditingController();
-  final TextEditingController _durationCtrl = TextEditingController();
-  final TextEditingController _locationCtrl = TextEditingController();
+  final _titleCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  final _budgetCtrl = TextEditingController();
+  final _durationCtrl = TextEditingController();
+  final _locationCtrl = TextEditingController();
 
   String? _selectedCategory;
   String _mode = "Sur place";
   String _flexibility = "Flexible";
   DateTime? _missionDate;
   TimeOfDay? _missionTime;
+  File? _photoFile;
 
-  File? _photo;
-  bool _isSaving = false;
-  bool _isLoadingInitialData = false;
-
-  // --- ANIMATION ---
-  late AnimationController _stepChangeController;
-  late Animation<Offset> _slideAnimation;
-
-  // --- GOOGLE PLACES ---
+  bool _loading = false;
+  bool _submitting = false;
   late GooglePlace googlePlace;
   List<AutocompletePrediction> _predictions = [];
+  final int _totalSteps = 4;
+  int _currentStep = 0;
 
-  // --- FORMATTER DATE ---
-  final DateFormat _dateFormatter = DateFormat("d MMM yyyy", "fr_FR");
+  // ---------------------------------------------------------------------------
+  // NOUVELLE LISTE COLORÉE
+  // ---------------------------------------------------------------------------
+  final List<Map<String, dynamic>> _categoriesList = [
+    {"name": "Bricolage", "icon": Icons.handyman_rounded, "color": const Color(0xFFFFF4E5), "accent": const Color(0xFFFF9800)},
+    {"name": "Jardinage", "icon": Icons.park_rounded, "color": const Color(0xFFE8F5E9), "accent": const Color(0xFF4CAF50)},
+    {"name": "Déménagement", "icon": Icons.local_shipping_rounded, "color": const Color(0xFFE3F2FD), "accent": const Color(0xFF2196F3)},
+    {"name": "Ménage", "icon": Icons.cleaning_services_rounded, "color": const Color(0xFFF3E5F5), "accent": const Color(0xFF9C27B0)},
+    {"name": "Enfants", "icon": Icons.child_care_rounded, "color": const Color(0xFFFFEBEE), "accent": const Color(0xFFE91E63)},
+    {"name": "Animaux", "icon": Icons.pets_rounded, "color": const Color(0xFFEFEBE9), "accent": const Color(0xFF795548)},
+    {"name": "Informatique", "icon": Icons.laptop_mac_rounded, "color": const Color(0xFFE0F7FA), "accent": const Color(0xFF00BCD4)},
+    {"name": "Aide à domicile", "icon": Icons.elderly_rounded, "color": const Color(0xFFFFF3E0), "accent": const Color(0xFFFF5722)},
+    {"name": "Cours particuliers", "icon": Icons.school_rounded, "color": const Color(0xFFE8EAF6), "accent": const Color(0xFF3F51B5)},
+    {"name": "Événementiel", "icon": Icons.celebration_rounded, "color": const Color(0xFFFCE4EC), "accent": const Color(0xFFE91E63)},
+  ];
 
   @override
   void initState() {
     super.initState();
     initializeDateFormatting('fr_FR', null);
-
-    _stepChangeController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 260),
-    );
-    _slideAnimation =
-        Tween<Offset>(begin: const Offset(0.1, 0), end: Offset.zero)
-            .animate(CurvedAnimation(
-          parent: _stepChangeController,
-          curve: Curves.easeOutCubic,
-        ));
-
-    googlePlace = GooglePlace(
-      // ⚠️ garde ta clé actuelle si besoin
-      "AIzaSyCXltusJoTE4wN04ETzYqLUSFRzRcX7DhY",
-    );
+    // REMPLACEZ PAR VOTRE VRAIE CLÉ API GOOGLE PLACES
+    googlePlace = GooglePlace("VOTRE_CLE_API_ICI");
 
     if (widget.editMissionId != null) {
       _loadMissionForEdit(widget.editMissionId!);
@@ -117,1083 +170,167 @@ class _MissionCreatePageState extends State<MissionCreatePage>
 
   @override
   void dispose() {
-    _stepChangeController.dispose();
-    _titleCtrl.dispose();
-    _descCtrl.dispose();
-    _budgetCtrl.dispose();
-    _durationCtrl.dispose();
-    _locationCtrl.dispose();
+    _titleCtrl.dispose(); _descCtrl.dispose(); _budgetCtrl.dispose();
+    _durationCtrl.dispose(); _locationCtrl.dispose(); _pageController.dispose();
     super.dispose();
   }
 
   // ---------------------------------------------------------------------------
-  //  HELPERS UI
+  // FIREBASE LOGIC
   // ---------------------------------------------------------------------------
-
-  List<BoxShadow> _softShadow([double opacity = 0.08]) => [
-    BoxShadow(
-      color: Colors.black.withOpacity(opacity),
-      blurRadius: 22,
-      offset: const Offset(0, 12),
-    ),
-  ];
-
-  InputDecoration _inputDecoration(
-      String placeholder, {
-        IconData? icon,
-        Widget? trailing,
-        int? maxLines,
-      }) {
-    return InputDecoration(
-      hintText: placeholder,
-      hintStyle: const TextStyle(
-        color: _secondaryText,
-        fontSize: 14,
-      ),
-      prefixIcon: icon != null
-          ? Icon(icon, size: 20, color: _secondaryText)
-          : null,
-      suffixIcon: trailing,
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 14,
-      ),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: _border, width: 1),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: _border, width: 1),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: _accent, width: 1.4),
-      ),
-    );
-  }
-
-  Widget _tip(String text) {
-    return Container(
-      margin: const EdgeInsets.only(top: 8, bottom: 18),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.lightbulb_outline,
-              size: 18, color: _accent),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: _secondaryText,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _chip({
-    required String label,
-    required IconData icon,
-    required bool selected,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? _accent.withOpacity(0.1) : _chipBg,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: selected ? _accent : Colors.transparent,
-            width: 1.3,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 15,
-              color: selected ? _accent : _secondaryText,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: selected ? _accent : _secondaryText,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  //  GOOGLE PLACE + IMAGE + PICKERS
-  // ---------------------------------------------------------------------------
-
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-    if (picked == null) return;
-    setState(() {
-      _photo = File(picked.path);
-    });
-  }
-
-  Future<void> _updatePredictions(String value) async {
-    if (value.isEmpty) {
-      setState(() => _predictions = []);
-      return;
-    }
-
-    final res = await googlePlace.autocomplete.get(
-      value,
-      language: "fr",
-      components: [Component("country", "fr")],
-    );
-
-    if (!mounted) return;
-    setState(() {
-      _predictions = res?.predictions ?? [];
-    });
-  }
-
-  Future<void> _useCurrentLocation() async {
-    final perm = await Geolocator.requestPermission();
-    if (perm == LocationPermission.denied ||
-        perm == LocationPermission.deniedForever) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Autorise la localisation dans les réglages."),
-        ),
-      );
-      return;
-    }
-
-    final pos = await Geolocator.getCurrentPosition();
-    final placemarks =
-    await placemarkFromCoordinates(pos.latitude, pos.longitude);
-
-    final street = placemarks.isNotEmpty ? placemarks.first.street ?? "" : "";
-    final city =
-    placemarks.isNotEmpty ? placemarks.first.locality ?? "" : "";
-
-    setState(() {
-      _locationCtrl.text =
-      street.isNotEmpty ? "$street, $city" : city;
-      _predictions = [];
-    });
-  }
-
-  Future<void> _pickDate() async {
-    DateTime focusedDay = _missionDate ?? DateTime.now();
-    DateTime? selected = _missionDate;
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 16,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                "Choisir une date",
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: _primaryText,
-                ),
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                height: 360,
-                child: StatefulBuilder(
-                  builder: (ctx, setModalState) {
-                    return TableCalendar(
-                      locale: 'fr_FR',
-                      firstDay: DateTime.now(),
-                      lastDay: DateTime.now().add(
-                        const Duration(days: 365 * 2),
-                      ),
-                      focusedDay: focusedDay,
-                      selectedDayPredicate: (day) =>
-                          isSameDay(selected, day),
-                      onDaySelected: (d, f) {
-                        setModalState(() {
-                          selected = d;
-                          focusedDay = f;
-                        });
-                      },
-                      onPageChanged: (f) => focusedDay = f,
-                      headerStyle: const HeaderStyle(
-                        formatButtonVisible: false,
-                        titleCentered: true,
-                      ),
-                      calendarStyle: CalendarStyle(
-                        selectedDecoration: const BoxDecoration(
-                          color: _accent,
-                          shape: BoxShape.circle,
-                        ),
-                        todayDecoration: BoxDecoration(
-                          color: _accent.withOpacity(0.25),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _accent,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text(
-                    "Valider",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (!mounted) return;
-    if (selected != null) {
-      setState(() => _missionDate = selected);
-    }
-  }
-
-  Future<void> _pickTime() async {
-    TimeOfDay temp = _missionTime ?? TimeOfDay.now();
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        final now = DateTime.now();
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 16,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                "Choisir une heure",
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: _primaryText,
-                ),
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                height: 220,
-                child: CupertinoDatePicker(
-                  mode: CupertinoDatePickerMode.time,
-                  initialDateTime: DateTime(
-                    now.year,
-                    now.month,
-                    now.day,
-                    temp.hour,
-                    temp.minute,
-                  ),
-                  use24hFormat: true,
-                  onDateTimeChanged: (d) {
-                    temp = TimeOfDay.fromDateTime(d);
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _accent,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text(
-                    "Valider",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (!mounted) return;
-    setState(() => _missionTime = temp);
-  }
-
-  // ---------------------------------------------------------------------------
-  //  FIREBASE : CHARGEMENT / SAUVEGARDE
-  // ---------------------------------------------------------------------------
-
   Future<void> _loadMissionForEdit(String id) async {
-    setState(() => _isLoadingInitialData = true);
+    setState(() => _loading = true);
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('missions')
-          .doc(id)
-          .get();
-
-      if (!doc.exists) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Mission introuvable ou supprimée."),
-          ),
-        );
-        setState(() => _isLoadingInitialData = false);
-        return;
-      }
-
-      final data = doc.data()!;
-      if (!mounted) return;
-
+      final snap = await FirebaseFirestore.instance.collection('missions').doc(id).get();
+      if (!snap.exists) { setState(() => _loading = false); return; }
+      final data = snap.data()!;
       setState(() {
         _titleCtrl.text = data['title'] ?? '';
         _descCtrl.text = data['description'] ?? '';
-        _budgetCtrl.text =
-            (data['budget'] ?? '').toString();
-        _durationCtrl.text =
-            (data['duration'] ?? '').toString();
+        _durationCtrl.text = data['duration']?.toString() ?? '';
+        _budgetCtrl.text = data['budget']?.toString() ?? '';
         _locationCtrl.text = data['location'] ?? '';
         _selectedCategory = data['category'];
         _mode = data['mode'] ?? 'Sur place';
         _flexibility = data['flexibility'] ?? 'Flexible';
-        if (data['deadline'] != null) {
-          _missionDate = (data['deadline'] as Timestamp).toDate();
-        }
+        if (data['deadline'] != null) _missionDate = (data['deadline'] as Timestamp).toDate();
         if (data['missionTime'] != null) {
           final parts = (data['missionTime'] as String).split(':');
-          if (parts.length == 2) {
-            _missionTime = TimeOfDay(
-              hour: int.tryParse(parts[0]) ?? 0,
-              minute: int.tryParse(parts[1]) ?? 0,
-            );
-          }
+          _missionTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
         }
-        _isLoadingInitialData = false;
+        _loading = false;
       });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isLoadingInitialData = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Erreur de chargement : $e")),
-      );
-    }
-  }
-
-  bool _isStepValid(int step) {
-    switch (step) {
-      case 0:
-        return _titleCtrl.text.trim().isNotEmpty &&
-            _descCtrl.text.trim().isNotEmpty &&
-            _selectedCategory != null;
-      case 1:
-        final d = double.tryParse(_durationCtrl.text);
-        final b = double.tryParse(_budgetCtrl.text);
-        return d != null && d > 0 && b != null && b > 0;
-      case 2:
-        return _locationCtrl.text.trim().isNotEmpty;
-      case 3:
-        return _missionDate != null;
-      default:
-        return false;
-    }
+    } catch (e) { setState(() => _loading = false); }
   }
 
   Future<void> _saveMission() async {
-    if (!_isStepValid(_currentStep)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-          Text("Complète cette étape avant de continuer."),
-        ),
-      );
+    if (!_formKey.currentState!.validate()) return;
+    if (_selectedCategory == null || _missionDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Catégorie et date requises"), backgroundColor: Colors.red));
       return;
     }
-
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _isSaving = true);
+    setState(() => _submitting = true);
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        throw Exception("Utilisateur non connecté");
-      }
-
-      // upload photo si besoin
+      if (user == null) throw Exception("Non connecté");
       String? photoUrl;
-      if (_photo != null) {
-        final ref = FirebaseStorage.instance
-            .ref()
-            .child("missions/${DateTime.now().millisecondsSinceEpoch}.jpg");
-        await ref.putFile(_photo!);
+      if (_photoFile != null) {
+        final ref = FirebaseStorage.instance.ref().child("missions/${DateTime.now().millisecondsSinceEpoch}.jpg");
+        await ref.putFile(_photoFile!);
         photoUrl = await ref.getDownloadURL();
       }
-
-      // localisation -> lat/lng
-      double? lat;
-      double? lng;
-      if (_locationCtrl.text.trim().isNotEmpty) {
+      double? lat, lng;
+      if (_locationCtrl.text.isNotEmpty) {
         try {
-          final locations =
-          await locationFromAddress(_locationCtrl.text.trim());
-          if (locations.isNotEmpty) {
-            lat = locations.first.latitude;
-            lng = locations.first.longitude;
-          }
-        } catch (_) {
-          // on ignore une erreur de geocoding
-        }
+          final res = await locationFromAddress(_locationCtrl.text);
+          if (res.isNotEmpty) { lat = res.first.latitude; lng = res.first.longitude; }
+        } catch (_) {}
       }
-
-      // user profile
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(user.uid)
-          .get();
-      final userData = userDoc.data() ?? {};
-
-      final missionsRef =
-      FirebaseFirestore.instance.collection('missions');
-
-      final String? missionTimeString = _missionTime != null
-          ? "${_missionTime!.hour.toString().padLeft(2, '0')}:${_missionTime!.minute.toString().padLeft(2, '0')}"
-          : null;
-
-      final baseData = {
-        "title": _titleCtrl.text.trim(),
-        "description": _descCtrl.text.trim(),
-        "duration": double.tryParse(_durationCtrl.text),
-        "budget": double.tryParse(_budgetCtrl.text) ?? 0,
-        "photoUrl": photoUrl,
-        "posterId": user.uid,
-        "category": _selectedCategory,
-        "posterName": userData['name'] ?? "",
-        "posterPhotoUrl": userData['photoUrl'] ?? "",
-        "posterRating": userData['rating'] ?? 0,
-        "posterReviewsCount": userData['reviewsCount'] ?? 0,
-        "position": lat != null && lng != null
-            ? {"lat": lat, "lng": lng}
-            : {},
-        "location": _locationCtrl.text.trim(),
-        "mode": _mode,
-        "flexibility": _flexibility,
-        "deadline": _missionDate != null
-            ? Timestamp.fromDate(_missionDate!)
-            : null,
-        "missionTime": missionTimeString,
+      final userData = (await FirebaseFirestore.instance.collection('users').doc(user.uid).get()).data() ?? {};
+      final String? timeStr = _missionTime != null ? "${_missionTime!.hour.toString().padLeft(2,'0')}:${_missionTime!.minute.toString().padLeft(2,'0')}" : null;
+      final data = {
+        "title": _titleCtrl.text.trim(), "description": _descCtrl.text.trim(),
+        "duration": double.tryParse(_durationCtrl.text) ?? 0, "budget": double.tryParse(_budgetCtrl.text) ?? 0,
+        "category": _selectedCategory, "location": _locationCtrl.text.trim(),
+        "mode": _mode, "flexibility": _flexibility,
+        "deadline": Timestamp.fromDate(_missionDate!), "missionTime": timeStr,
+        "position": lat != null ? {"lat": lat, "lng": lng} : null,
+        "updatedAt": FieldValue.serverTimestamp(),
       };
-
-      if (widget.editMissionId != null) {
-        await missionsRef.doc(widget.editMissionId!).update({
-          ...baseData,
-          "updatedAt": FieldValue.serverTimestamp(),
+      if (widget.editMissionId == null) {
+        await FirebaseFirestore.instance.collection('missions').add({
+          ...data, "posterId": user.uid, "posterName": userData['name'] ?? 'User',
+          "posterPhotoUrl": userData['photoUrl'] ?? '', "posterRating": userData['rating'] ?? 0.0,
+          "posterReviewsCount": userData['reviewsCount'] ?? 0, "photoUrl": photoUrl ?? '',
+          "status": "open", "offersCount": 0, "createdAt": FieldValue.serverTimestamp(),
         });
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Mission mise à jour ✅"),
-            backgroundColor: Colors.green,
-          ),
-        );
       } else {
-        await missionsRef.add({
-          ...baseData,
-          "status": "open",
-          "offersCount": 0,
-          "createdAt": FieldValue.serverTimestamp(),
-        });
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Mission publiée avec succès ✅"),
-            backgroundColor: Colors.green,
-          ),
-        );
+        final doc = FirebaseFirestore.instance.collection('missions').doc(widget.editMissionId);
+        final oldData = await doc.get();
+        await doc.update({ ...data, "photoUrl": photoUrl ?? oldData.data()?['photoUrl'] ?? '', });
       }
-
-      if (!mounted) return;
-      Navigator.pop(context);
+      if(mounted) Navigator.pop(context);
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Erreur : $e")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erreur: $e")));
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
   // ---------------------------------------------------------------------------
-  //  NAV ET CONFIRMATION SORTIE
+  // NAVIGATION & OUTILS
   // ---------------------------------------------------------------------------
-
-  Future<bool> _confirmExit() async {
-    final hasData = _titleCtrl.text.isNotEmpty ||
-        _descCtrl.text.isNotEmpty ||
-        _selectedCategory != null ||
-        _budgetCtrl.text.isNotEmpty ||
-        _durationCtrl.text.isNotEmpty ||
-        _locationCtrl.text.isNotEmpty;
-
-    if (!hasData) return true;
-
-    final result = await showCupertinoDialog<bool>(
-      context: context,
-      builder: (ctx) => CupertinoAlertDialog(
-        title: const Text("Quitter la création ?"),
-        content: const Text(
-          "Les informations non enregistrées seront perdues.",
-        ),
-        actions: [
-          CupertinoDialogAction(
-            child: const Text("Continuer"),
-            onPressed: () => Navigator.pop(ctx, false),
-          ),
-          CupertinoDialogAction(
-            isDestructiveAction: true,
-            child: const Text("Quitter"),
-            onPressed: () => Navigator.pop(ctx, true),
-          ),
-        ],
-      ),
-    ) ??
-        false;
-
-    return result;
+  void _nextPage() {
+    if (_currentStep < _totalSteps - 1) {
+      _pageController.nextPage(duration: const Duration(milliseconds: 600), curve: Curves.easeOutQuart);
+      setState(() => _currentStep++);
+    } else { _saveMission(); }
   }
-
-  void _goToStep(int index) {
-    if (index == _currentStep) return;
-    setState(() {
-      _currentStep = index;
-      _stepChangeController
-        ..reset()
-        ..forward();
-    });
+  void _prevPage() {
+    if (_currentStep > 0) {
+      _pageController.previousPage(duration: const Duration(milliseconds: 600), curve: Curves.easeOutQuart);
+      setState(() => _currentStep--);
+    } else { Navigator.pop(context); }
   }
-
-  void _nextStepOrSave() {
-    if (!_isStepValid(_currentStep)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-          Text("Complète cette étape pour continuer."),
-        ),
-      );
-      return;
-    }
-    if (_currentStep == _totalSteps - 1) {
-      _saveMission();
-    } else {
-      _goToStep(_currentStep + 1);
+  Future<void> _getCurrentLocation() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+      final pos = await Geolocator.getCurrentPosition();
+      final marks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
+      if (marks.isNotEmpty) setState(() => _locationCtrl.text = "${marks.first.street ?? ''} ${marks.first.locality ?? ''}".trim());
     }
   }
-
-  void _previousStep() {
-    if (_currentStep == 0) return;
-    _goToStep(_currentStep - 1);
+  Future<void> _searchPlaces(String val) async {
+    if (val.isEmpty) { setState(() => _predictions = []); return; }
+    final res = await googlePlace.autocomplete.get(val, language: "fr", components: [Component("country", "fr")]);
+    if (res?.predictions != null) setState(() => _predictions = res!.predictions!);
+  }
+  Future<void> _pickImage() async {
+    final xfile = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if(xfile != null) setState(() => _photoFile = File(xfile.path));
   }
 
   // ---------------------------------------------------------------------------
-  //  HEADER / STEPPER / APERCU
+  // WIDGETS UI HELPERS
   // ---------------------------------------------------------------------------
 
-  Widget _buildVerticalStepper() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: List.generate(_totalSteps, (index) {
-        final bool isActive = index == _currentStep;
-        final bool isPast = index < _currentStep;
-
-        final Color dotColor =
-        isActive || isPast ? _accent : _border;
-        final Color lineColor = isPast ? _accent : _border;
-
-        return InkWell(
-          onTap: () => _goToStep(index),
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Column(
-                  children: [
-                    Container(
-                      width: 22,
-                      height: 22,
-                      decoration: BoxDecoration(
-                        color: isActive
-                            ? _accent
-                            : Colors.white,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: dotColor,
-                          width: 2,
-                        ),
-                      ),
-                      child: Icon(
-                        _stepIcons[index],
-                        size: 12,
-                        color: isActive
-                            ? Colors.white
-                            : dotColor,
-                      ),
-                    ),
-                    if (index != _totalSteps - 1)
-                      Container(
-                        width: 2,
-                        height: 32,
-                        margin: const EdgeInsets.only(top: 2),
-                        decoration: BoxDecoration(
-                          color: lineColor,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 2.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          "Étape ${index + 1}",
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: isActive || isPast
-                                ? _accent
-                                : _secondaryText,
-                          ),
-                        ),
-                        Text(
-                          _stepTitles[index],
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight:
-                            isActive ? FontWeight.w700 : FontWeight.w600,
-                            color: _primaryText,
-                          ),
-                        ),
-                        Text(
-                          _stepSubtitles[index],
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: _secondaryText,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      }),
-    );
-  }
-
-  Widget _buildRecapMiniCard() {
-    final String titlePreview = _titleCtrl.text.trim().isEmpty
-        ? "Titre de votre mission"
-        : _titleCtrl.text.trim();
-
-    final String catPreview =
-        _selectedCategory ?? "Catégorie";
-    final String budgetPreview = _budgetCtrl.text.trim().isEmpty
-        ? "Budget à définir"
-        : "${_budgetCtrl.text.trim()} €";
-    final String locationPreview = _locationCtrl.text.trim().isEmpty
-        ? "Lieu à préciser"
-        : _locationCtrl.text.trim();
-    final String datePreview = _missionDate != null
-        ? _dateFormatter.format(_missionDate!)
-        : "Date à définir";
-
-    String timePreview;
-    if (_flexibility == "Fixe" && _missionTime != null) {
-      timePreview = _missionTime!.format(context);
-    } else if (_flexibility == "Flexible") {
-      timePreview = "Horaire flexible";
-    } else {
-      timePreview = "Horaire à préciser";
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(top: 18),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF171717),
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: _softShadow(0.2),
-        gradient: const LinearGradient(
-          colors: [
-            Color(0xFF1F2933),
-            Color(0xFF111827),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.visibility_rounded,
-            color: Colors.white70,
-            size: 20,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  "Aperçu en temps réel",
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  titlePreview,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    _recapPill(Icons.category, catPreview),
-                    _recapPill(Icons.euro, budgetPreview),
-                    _recapPill(Icons.place, locationPreview),
-                    _recapPill(Icons.calendar_today, datePreview),
-                    _recapPill(Icons.access_time, timePreview),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _recapPill(IconData icon, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: Colors.white70),
-          const SizedBox(width: 3),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 11,
-              color: Colors.white,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  //  CONTENU DES ETAPES
-  // ---------------------------------------------------------------------------
-
-  Widget _step1Content() {
+  Widget _buildNeonTextField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    TextInputType type = TextInputType.text,
+    int lines = 1,
+    String? Function(String?)? validator,
+    Widget? suffix,
+    Function(String)? onChanged,
+  }) {
+    final bool isText = type == TextInputType.text || type == TextInputType.multiline;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          "Décrire la mission",
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            color: _primaryText,
-          ),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          "Explique simplement ce dont tu as besoin.",
-          style: TextStyle(fontSize: 13, color: _secondaryText),
-        ),
-        _tip(
-          "Un titre clair et une description précise aident les prestataires "
-              "à comprendre rapidement la mission.",
-        ),
-        TextFormField(
-          controller: _titleCtrl,
-          decoration: _inputDecoration(
-            "Titre (ex : Monter un meuble IKEA)",
-            icon: Icons.work_outline_rounded,
-          ),
-          onChanged: (_) => setState(() {}),
-          validator: (v) =>
-          v == null || v.trim().isEmpty ? "Le titre est requis" : null,
-        ),
-        const SizedBox(height: 14),
-        GestureDetector(
-          onTap: _openCategoryPicker,
-          child: AbsorbPointer(
-            child: TextFormField(
-              decoration: _inputDecoration(
-                "Catégorie",
-                icon: Icons.category_outlined,
-                trailing: const Icon(Icons.expand_more_rounded,
-                    color: _secondaryText),
-              ),
-              controller: TextEditingController(
-                text: _selectedCategory ?? "",
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        TextFormField(
-          controller: _descCtrl,
-          maxLines: 4,
-          decoration: _inputDecoration(
-            "Description (détails, contraintes, matériel fourni…)",
-            icon: Icons.description_outlined,
-          ),
-          onChanged: (_) => setState(() {}),
-          validator: (v) => v == null || v.trim().isEmpty
-              ? "La description est requise"
-              : null,
-        ),
-      ],
-    );
-  }
-
-  Widget _step2Content() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Budget & durée",
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            color: _primaryText,
-          ),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          "Indique une durée réaliste et un budget cohérent.",
-          style: TextStyle(fontSize: 13, color: _secondaryText),
-        ),
-        _tip(
-          "Un budget clair évite les malentendus et attire des prestataires sérieux.",
-        ),
-        TextFormField(
-          controller: _durationCtrl,
-          keyboardType:
-          const TextInputType.numberWithOptions(decimal: true),
-          decoration: _inputDecoration(
-            "Durée estimée (en heures)",
-            icon: Icons.hourglass_bottom_rounded,
-          ),
-          onChanged: (_) => setState(() {}),
-          validator: (v) {
-            if (v == null || v.trim().isEmpty) {
-              return "La durée est requise";
-            }
-            final d = double.tryParse(v);
-            if (d == null || d <= 0) {
-              return "Indique une durée valide";
-            }
-            return null;
-          },
-        ),
-        const SizedBox(height: 14),
-        TextFormField(
-          controller: _budgetCtrl,
-          keyboardType:
-          const TextInputType.numberWithOptions(decimal: true),
-          decoration: _inputDecoration(
-            "Budget proposé (€)",
-            icon: Icons.euro_symbol_rounded,
-          ),
-          onChanged: (_) => setState(() {}),
-          validator: (v) {
-            if (v == null || v.trim().isEmpty) {
-              return "Le budget est requis";
-            }
-            final b = double.tryParse(v);
-            if (b == null || b <= 0) {
-              return "Indique un montant valide";
-            }
-            return null;
-          },
-        ),
-        const SizedBox(height: 22),
-        const Text(
-          "Photo (optionnel)",
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: _primaryText,
-          ),
-        ),
+        Text(label.toUpperCase(), style: const TextStyle(color: AppTheme.textGrey, fontSize: 11, letterSpacing: 1.2, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        GestureDetector(
-          onTap: _pickImage,
-          child: Container(
-            height: 170,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              color: const Color(0xFFF3F4F6),
-              border: Border.all(color: _border),
-              image: _photo != null
-                  ? DecorationImage(
-                image: FileImage(_photo!),
-                fit: BoxFit.cover,
-                colorFilter: ColorFilter.mode(
-                  Colors.black.withOpacity(0.3),
-                  BlendMode.darken,
-                ),
-              )
-                  : null,
-            ),
-            child: _photo == null
-                ? Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
-                Icon(
-                  Icons.add_a_photo_outlined,
-                  color: _accent,
-                  size: 28,
-                ),
-                SizedBox(height: 6),
-                Text(
-                  "Ajouter une photo",
-                  style: TextStyle(
-                    color: _primaryText,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  "Optionnel, mais souvent utile",
-                  style: TextStyle(
-                    color: _secondaryText,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            )
-                : const Center(
-              child: Icon(
-                Icons.edit_outlined,
-                color: Colors.white,
-                size: 40,
-              ),
+        Container(
+          decoration: AppTheme.glassBox(),
+          child: TextFormField(
+            controller: controller,
+            keyboardType: type,
+            maxLines: lines,
+            onChanged: onChanged,
+            textCapitalization: isText ? TextCapitalization.sentences : TextCapitalization.none,
+            autocorrect: false,
+            enableSuggestions: true,
+            style: const TextStyle(color: AppTheme.textDark, fontSize: 16),
+            cursorColor: AppTheme.neonPrimary,
+            validator: validator,
+            decoration: InputDecoration(
+              prefixIcon: Icon(icon, color: AppTheme.neonPrimary),
+              suffixIcon: suffix,
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              hintText: "Entrez ici...",
+              hintStyle: TextStyle(color: AppTheme.textGrey.withOpacity(0.5)),
             ),
           ),
         ),
@@ -1201,535 +338,127 @@ class _MissionCreatePageState extends State<MissionCreatePage>
     );
   }
 
-  Widget _step3Content() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Lieu & modalité",
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            color: _primaryText,
-          ),
+  Widget _buildSelectionCard(String text, IconData icon, bool isSelected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.white.withOpacity(0.5),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: isSelected ? AppTheme.neonPrimary : Colors.grey.shade200, width: isSelected ? 2 : 1),
+          boxShadow: isSelected ? AppTheme.coloredShadow(AppTheme.neonPrimary) : [],
         ),
-        const SizedBox(height: 4),
-        const Text(
-          "Précise la ville ou l’adresse.",
-          style: TextStyle(fontSize: 13, color: _secondaryText),
-        ),
-        _tip(
-          "MaMission met en avant les prestations proches : une localisation précise "
-              "augmente tes chances de recevoir des offres.",
-        ),
-        TextFormField(
-          controller: _locationCtrl,
-          decoration: _inputDecoration(
-            "Localisation (ville ou adresse)",
-            icon: Icons.place_outlined,
-            trailing: IconButton(
-              onPressed: _useCurrentLocation,
-              icon: const Icon(
-                Icons.my_location_rounded,
-                color: _accent,
-              ),
-            ),
-          ),
-          onChanged: (value) {
-            _updatePredictions(value);
-            setState(() {});
-          },
-          validator: (v) =>
-          v == null || v.trim().isEmpty ? "La localisation est requise" : null,
-        ),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 180),
-          child: _predictions.isNotEmpty
-              ? Container(
-            key: const ValueKey("predictions"),
-            margin: const EdgeInsets.only(top: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: _softShadow(0.06),
-            ),
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: _predictions.length,
-              itemBuilder: (context, index) {
-                final p = _predictions[index];
-                return ListTile(
-                  leading: const Icon(
-                    Icons.location_on_outlined,
-                    color: _accent,
-                  ),
-                  title: Text(p.description ?? ""),
-                  onTap: () {
-                    setState(() {
-                      _locationCtrl.text = p.description ?? "";
-                      _predictions = [];
-                    });
-                    FocusScope.of(context).unfocus();
-                  },
-                );
-              },
-            ),
-          )
-              : const SizedBox.shrink(),
-        ),
-        const SizedBox(height: 22),
-        const Text(
-          "Mode d’exécution",
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: _primaryText,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 10,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            _chip(
-              label: "Sur place",
-              icon: Icons.location_on_outlined,
-              selected: _mode == "Sur place",
-              onTap: () => setState(() => _mode = "Sur place"),
-            ),
-            _chip(
-              label: "À distance",
-              icon: Icons.computer_rounded,
-              selected: _mode == "À distance",
-              onTap: () => setState(() => _mode = "À distance"),
-            ),
+            Icon(icon, color: isSelected ? AppTheme.neonPrimary : AppTheme.textGrey, size: 20),
+            const SizedBox(width: 8),
+            Text(text, style: TextStyle(color: isSelected ? AppTheme.textDark : AppTheme.textGrey, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
           ],
-        ),
-      ],
-    );
-  }
-
-  Widget _step4Content() {
-    final String dateLabel = _missionDate != null
-        ? _dateFormatter.format(_missionDate!)
-        : "Choisir une date";
-    final String timeLabel = _missionTime != null
-        ? _missionTime!.format(context)
-        : "Choisir une heure";
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Date & flexibilité",
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w800,
-            color: _primaryText,
-          ),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          "Plus tu es flexible, plus tu reçois d’offres.",
-          style: TextStyle(fontSize: 13, color: _secondaryText),
-        ),
-        _tip(
-          "Les prestataires peuvent adapter leur agenda si tu indiques une flexibilité horaire.",
-        ),
-        GestureDetector(
-          onTap: _pickDate,
-          child: AbsorbPointer(
-            child: TextFormField(
-              decoration: _inputDecoration(
-                "Date souhaitée",
-                icon: Icons.calendar_today_rounded,
-              ),
-              controller: TextEditingController(text: dateLabel),
-            ),
-          ),
-        ),
-        const SizedBox(height: 22),
-        const Text(
-          "Flexibilité horaire",
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: _primaryText,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 10,
-          children: [
-            _chip(
-              label: "Flexible",
-              icon: Icons.watch_later_outlined,
-              selected: _flexibility == "Flexible",
-              onTap: () {
-                setState(() {
-                  _flexibility = "Flexible";
-                  _missionTime = null;
-                });
-              },
-            ),
-            _chip(
-              label: "Fixe",
-              icon: Icons.access_time_filled_rounded,
-              selected: _flexibility == "Fixe",
-              onTap: () async {
-                setState(() => _flexibility = "Fixe");
-                if (_missionTime == null) {
-                  await _pickTime();
-                }
-              },
-            ),
-          ],
-        ),
-        AnimatedSize(
-          duration: const Duration(milliseconds: 260),
-          curve: Curves.easeInOutCubic,
-          child: _flexibility == "Fixe"
-              ? Padding(
-            padding: const EdgeInsets.only(top: 16.0),
-            child: GestureDetector(
-              onTap: _pickTime,
-              child: AbsorbPointer(
-                child: TextFormField(
-                  decoration: _inputDecoration(
-                    "Heure de la mission",
-                    icon: Icons.access_time_rounded,
-                  ),
-                  controller: TextEditingController(
-                    text: timeLabel,
-                  ),
-                ),
-              ),
-            ),
-          )
-              : const SizedBox.shrink(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStepBody() {
-    Widget content;
-    switch (_currentStep) {
-      case 0:
-        content = _step1Content();
-        break;
-      case 1:
-        content = _step2Content();
-        break;
-      case 2:
-        content = _step3Content();
-        break;
-      case 3:
-      default:
-        content = _step4Content();
-    }
-
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 260),
-      transitionBuilder: (child, animation) {
-        return FadeTransition(
-          opacity: animation,
-          child: SlideTransition(
-            position: _slideAnimation,
-            child: child,
-          ),
-        );
-      },
-      child: Form(
-        key: _formKey,
-        child: content,
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  //  BUILD
-  // ---------------------------------------------------------------------------
-
-  @override
-  Widget build(BuildContext context) {
-    final bool isLastStep = _currentStep == _totalSteps - 1;
-    final bool canProceed = _isStepValid(_currentStep);
-
-    return WillPopScope(
-      onWillPop: () async {
-        final ok = await _confirmExit();
-        return ok;
-      },
-      child: Scaffold(
-        resizeToAvoidBottomInset: true,
-        appBar: buildAppleMissionAppBar(
-          title: widget.editMissionId != null
-              ? "Modifier la mission"
-              : "Créer une mission",
-          leading: IconButton(
-            icon: const Icon(Icons.close, color: Colors.white),
-            onPressed: () async {
-              final ok = await _confirmExit();
-              if (ok && mounted) Navigator.pop(context);
-            },
-          ),
-        ),
-        body: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [_bgGradientTop, _bgGradientBottom],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-          ),
-          child: SafeArea(
-            top: false,
-            child: _isLoadingInitialData
-                ? const Center(
-              child: CircularProgressIndicator(
-                color: Colors.white,
-              ),
-            )
-                : LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight - 40,
-                    ),
-                    child: Column(
-                      children: [
-                        // CARTE PRINCIPALE
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: _cardBackground,
-                            borderRadius: BorderRadius.circular(26),
-                            boxShadow: _softShadow(),
-                          ),
-                          child: Column(
-                            crossAxisAlignment:
-                            CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                                children: [
-                                  // STEPPER VERTICAL
-                                  SizedBox(
-                                    width: 130,
-                                    child: _buildVerticalStepper(),
-                                  ),
-                                  const SizedBox(width: 18),
-                                  // CONTENU ETAPE
-                                  Expanded(
-                                    child: _buildStepBody(),
-                                  ),
-                                ],
-                              ),
-                              _buildRecapMiniCard(),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 18),
-                        // BARRE DE NAVIGATION
-                        Container(
-                          padding:
-                          const EdgeInsets.symmetric(horizontal: 8),
-                          child: Row(
-                            children: [
-                              if (_currentStep > 0)
-                                SizedBox(
-                                  height: 52,
-                                  width: 52,
-                                  child: OutlinedButton(
-                                    onPressed:
-                                    _isSaving ? null : _previousStep,
-                                    style: OutlinedButton.styleFrom(
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                        BorderRadius.circular(16),
-                                      ),
-                                      side: const BorderSide(
-                                        color: Colors.white70,
-                                      ),
-                                      backgroundColor:
-                                      Colors.white.withOpacity(0.05),
-                                    ),
-                                    child: const Icon(
-                                      Icons.arrow_back_ios_new_rounded,
-                                      color: Colors.white,
-                                      size: 18,
-                                    ),
-                                  ),
-                                ),
-                              if (_currentStep > 0)
-                                const SizedBox(width: 12),
-                              Expanded(
-                                child: SizedBox(
-                                  height: 52,
-                                  child: ElevatedButton(
-                                    onPressed: !_isSaving &&
-                                        (canProceed || isLastStep)
-                                        ? _nextStepOrSave
-                                        : _nextStepOrSave,
-                                    style: ElevatedButton.styleFrom(
-                                      elevation: canProceed ? 8 : 0,
-                                      backgroundColor: canProceed
-                                          ? Colors.white
-                                          : Colors.white.withOpacity(0.6),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                        BorderRadius.circular(18),
-                                      ),
-                                    ),
-                                    child: _isSaving
-                                        ? const SizedBox(
-                                      height: 22,
-                                      width: 22,
-                                      child:
-                                      CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        valueColor:
-                                        AlwaysStoppedAnimation<
-                                            Color>(_accent),
-                                      ),
-                                    )
-                                        : Row(
-                                      mainAxisAlignment:
-                                      MainAxisAlignment.center,
-                                      mainAxisSize:
-                                      MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          isLastStep
-                                              ? (widget.editMissionId !=
-                                              null
-                                              ? "Enregistrer la mission"
-                                              : "Publier la mission")
-                                              : "Étape suivante",
-                                          style: const TextStyle(
-                                            color: _accent,
-                                            fontWeight:
-                                            FontWeight.w800,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Icon(
-                                          isLastStep
-                                              ? Icons
-                                              .check_circle_outline_rounded
-                                              : Icons
-                                              .arrow_forward_ios_rounded,
-                                          size: 18,
-                                          color: _accent,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
         ),
       ),
     );
   }
 
   // ---------------------------------------------------------------------------
-  //  CATEGORY PICKER
+  // NOUVEAU : MENU CATÉGORIE STYLÉ
   // ---------------------------------------------------------------------------
-
-  static const Map<String, IconData> _categories = {
-    "Maison & Bricolage": Icons.home_repair_service_outlined,
-    "Déménagement & Transport": Icons.local_shipping_outlined,
-    "Ménage & Aide à domicile": Icons.cleaning_services_outlined,
-    "Jardinage & Extérieur": Icons.yard_outlined,
-    "Informatique & High-tech": Icons.laptop_chromebook_outlined,
-    "Événementiel & Service": Icons.celebration_outlined,
-    "Cours & Aide scolaire": Icons.school_outlined,
-  };
-
-  Future<void> _openCategoryPicker() async {
-    await showModalBottomSheet(
+  // ---------------------------------------------------------------------------
+  // NOUVEAU MENU CATÉGORIE (Style "Image Illustrée")
+  // ---------------------------------------------------------------------------
+  void _showCategoryModal() {
+    showModalBottomSheet(
       context: context,
+      backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 16,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+      builder: (context) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.75, // Un peu plus haut
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
           ),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                "Choisir une catégorie",
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: _primaryText,
-                ),
-              ),
               const SizedBox(height: 12),
-              SizedBox(
-                height: 380,
+              // Barre de drag
+              Container(
+                width: 40, height: 5,
+                decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10)),
+              ),
+              const SizedBox(height: 24),
+
+              const Text("CHOISIR UNE CATÉGORIE",
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.2, color: AppTheme.textGrey)
+              ),
+              const SizedBox(height: 24),
+
+              Expanded(
                 child: ListView.separated(
-                  itemCount: _categories.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (ctx, index) {
-                    final name = _categories.keys.elementAt(index);
-                    final icon = _categories.values.elementAt(index);
-                    final selected = _selectedCategory == name;
-                    return ListTile(
-                      leading: Icon(
-                        icon,
-                        color: selected ? _accent : _primaryText,
-                      ),
-                      title: Text(
-                        name,
-                        style: TextStyle(
-                          fontWeight: selected
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          color: selected ? _accent : _primaryText,
-                        ),
-                      ),
-                      trailing: selected
-                          ? const Icon(Icons.check_circle_rounded,
-                          color: _accent)
-                          : null,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                  itemCount: _categoriesList.length,
+                  separatorBuilder: (c, i) => const SizedBox(height: 20), // Plus d'espace entre les éléments
+                  itemBuilder: (context, index) {
+                    final category = _categoriesList[index];
+                    final String name = category['name'];
+                    final IconData icon = category['icon'];
+                    final Color colorBg = category['color'];
+                    final Color colorAccent = category['accent'];
+
+                    final isSelected = _selectedCategory == name;
+
+                    return InkWell(
                       onTap: () {
                         setState(() => _selectedCategory = name);
-                        Navigator.pop(ctx);
+                        Navigator.pop(context);
                       },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        padding: const EdgeInsets.all(12), // Padding interne global
+                        decoration: BoxDecoration(
+                          color: isSelected ? Colors.grey.shade50 : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: isSelected
+                              ? Border.all(color: AppTheme.neonPrimary, width: 2)
+                              : Border.all(color: Colors.transparent), // Bordure invisible pour garder l'alignement
+                        ),
+                        child: Row(
+                          children: [
+                            // --- LE CARRÉ ILLUSTRÉ (Comme ton image) ---
+                            Container(
+                              width: 64, // Taille augmentée
+                              height: 64,
+                              decoration: BoxDecoration(
+                                color: colorBg, // Couleur de fond pastel
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: Icon(icon, color: colorAccent, size: 32), // Icone colorée
+                            ),
+
+                            const SizedBox(width: 20),
+
+                            // TEXTE
+                            Expanded(
+                              child: Text(
+                                  name,
+                                  style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.textDark
+                                  )
+                              ),
+                            ),
+
+                            // CHECKMARK SI SÉLECTIONNÉ
+                            if (isSelected)
+                              const Icon(Icons.check_circle, color: AppTheme.neonPrimary, size: 28)
+                            else
+                              const Icon(Icons.chevron_right, color: Colors.grey, size: 24),
+                          ],
+                        ),
+                      ),
                     );
                   },
                 ),
@@ -1740,4 +469,562 @@ class _MissionCreatePageState extends State<MissionCreatePage>
       },
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // ÉTAPES DU FORMULAIRE
+  // ---------------------------------------------------------------------------
+
+  // ÉTAPE 1 : QUOI ?
+  Widget _buildStep1() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const FadeInSlide(delay: 0.1, child: Text("LA MISSION", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: AppTheme.textDark))),
+          const FadeInSlide(delay: 0.2, child: Text("Décrivez ce que vous voulez.", style: TextStyle(fontSize: 16, color: AppTheme.textGrey))),
+          const SizedBox(height: 40),
+
+          FadeInSlide(
+            delay: 0.3,
+            child: _buildNeonTextField(
+              controller: _titleCtrl,
+              label: "Titre de la mission",
+              icon: Icons.rocket_launch_outlined,
+              validator: (v) => v!.isEmpty ? "Requis" : null,
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          const FadeInSlide(delay: 0.4, child: Text("CATÉGORIE", style: TextStyle(color: AppTheme.textGrey, fontSize: 11, letterSpacing: 1.2, fontWeight: FontWeight.bold))),
+          const SizedBox(height: 8),
+          FadeInSlide(
+            delay: 0.45,
+            child: Container(
+              decoration: AppTheme.glassBox(),
+              child: Container(
+                decoration: AppTheme.glassBox(),
+                child: ListTile(
+                  // AFFICHE L'ICÔNE SI UNE CATÉGORIE EST CHOISIE
+                  leading: _selectedCategory != null
+                      ? Icon(_getIconForCategory(_selectedCategory), color: AppTheme.neonPrimary)
+                      : null,
+                  title: Text(_selectedCategory ?? "Sélectionner",
+                      style: TextStyle(color: _selectedCategory != null ? AppTheme.textDark : AppTheme.textGrey)),
+                  trailing: const Icon(Icons.arrow_drop_down_circle, color: AppTheme.neonPrimary),
+                  onTap: _showCategoryModal,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          FadeInSlide(
+            delay: 0.5,
+            child: _buildNeonTextField(
+              controller: _descCtrl,
+              label: "Détails & Contraintes",
+              icon: Icons.notes_rounded,
+              lines: 5,
+              validator: (v) => v!.isEmpty ? "Détails requis" : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ÉTAPE 2 : COMBIEN ?
+  Widget _buildStep2() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const FadeInSlide(delay: 0.1, child: Text("BUDGET & TEMPS", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: AppTheme.textDark))),
+          const FadeInSlide(delay: 0.2, child: Text("Définissez les ressources.", style: TextStyle(fontSize: 16, color: AppTheme.textGrey))),
+          const SizedBox(height: 40),
+
+          Row(
+            children: [
+              Expanded(
+                child: FadeInSlide(
+                  delay: 0.3,
+                  child: _buildNeonTextField(
+                    controller: _durationCtrl,
+                    label: "Durée (Heures)",
+                    icon: Icons.timer_outlined,
+                    type: const TextInputType.numberWithOptions(decimal: true),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: FadeInSlide(
+                  delay: 0.35,
+                  child: _buildNeonTextField(
+                    controller: _budgetCtrl,
+                    label: "Budget (€)",
+                    icon: Icons.euro_rounded,
+                    type: TextInputType.number,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 32),
+
+          const FadeInSlide(delay: 0.4, child: Text("PHOTO (OPTIONNEL)", style: TextStyle(color: AppTheme.textGrey, fontSize: 11, letterSpacing: 1.2, fontWeight: FontWeight.bold))),
+          const SizedBox(height: 12),
+          FadeInSlide(
+            delay: 0.45,
+            child: GestureDetector(
+              onTap: _pickImage,
+              child: Container(
+                height: 200,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.grey.shade300, width: 1),
+                  image: _photoFile != null ? DecorationImage(image: FileImage(_photoFile!), fit: BoxFit.cover) : null,
+                ),
+                child: _photoFile == null ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: const [
+                    Icon(Icons.add_a_photo_outlined, color: AppTheme.neonPrimary, size: 40),
+                    SizedBox(height: 8),
+                    Text("Uploader une image", style: TextStyle(color: AppTheme.textGrey))
+                  ],
+                ) : null,
+              ),
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  // ÉTAPE 3 : OÙ ?
+  Widget _buildStep3() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const FadeInSlide(delay: 0.1, child: Text("LOCALISATION", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: AppTheme.textDark))),
+          const FadeInSlide(delay: 0.2, child: Text("Où la mission se déroule-t-elle ?", style: TextStyle(fontSize: 16, color: AppTheme.textGrey))),
+          const SizedBox(height: 40),
+
+          FadeInSlide(
+            delay: 0.3,
+            child: _buildNeonTextField(
+              controller: _locationCtrl,
+              label: "Adresse ou Ville",
+              icon: Icons.map_outlined,
+              onChanged: _searchPlaces,
+              suffix: IconButton(
+                icon: const Icon(Icons.my_location, color: AppTheme.neonPrimary),
+                onPressed: _getCurrentLocation,
+              ),
+            ),
+          ),
+
+          if (_predictions.isNotEmpty)
+            FadeInSlide(
+              delay: 0.1,
+              child: Container(
+                margin: const EdgeInsets.only(top: 8),
+                decoration: AppTheme.glassBox(),
+                child: Column(
+                  children: _predictions.map((p) => ListTile(
+                    title: Text(p.description ?? "", style: const TextStyle(color: AppTheme.textDark)),
+                    onTap: () {
+                      _locationCtrl.text = p.description ?? "";
+                      setState(() => _predictions = []);
+                      FocusScope.of(context).unfocus();
+                    },
+                  )).toList(),
+                ),
+              ),
+            ),
+
+          const SizedBox(height: 32),
+          const FadeInSlide(delay: 0.4, child: Text("MODE", style: TextStyle(color: AppTheme.textGrey, fontSize: 11, letterSpacing: 1.2, fontWeight: FontWeight.bold))),
+          const SizedBox(height: 12),
+          FadeInSlide(
+            delay: 0.45,
+            child: Wrap(
+              spacing: 12,
+              children: [
+                _buildSelectionCard("Sur place", Icons.place, _mode == "Sur place", () => setState(() => _mode = "Sur place")),
+                _buildSelectionCard("À distance", Icons.wifi, _mode == "À distance", () => setState(() => _mode = "À distance")),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  // ÉTAPE 4 : QUAND ?
+  Widget _buildStep4() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const FadeInSlide(delay: 0.1, child: Text("PLANIFICATION", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: AppTheme.textDark))),
+          const FadeInSlide(delay: 0.2, child: Text("Quand êtes-vous disponible ?", style: TextStyle(fontSize: 16, color: AppTheme.textGrey))),
+          const SizedBox(height: 40),
+
+          // Calendrier Stylisé Clair
+          FadeInSlide(
+            delay: 0.3,
+            child: Container(
+              decoration: AppTheme.glassBox(),
+              padding: const EdgeInsets.all(8),
+              child: TableCalendar(
+                locale: 'fr_FR',
+                firstDay: DateTime.now(),
+                lastDay: DateTime.now().add(const Duration(days: 365)),
+                focusedDay: _missionDate ?? DateTime.now(),
+                selectedDayPredicate: (day) => isSameDay(_missionDate, day),
+                onDaySelected: (s, f) => setState(() => _missionDate = s),
+                headerStyle: const HeaderStyle(
+                  formatButtonVisible: false,
+                  titleCentered: true,
+                  titleTextStyle: TextStyle(color: AppTheme.textDark, fontWeight: FontWeight.bold, fontSize: 16),
+                  leftChevronIcon: Icon(Icons.chevron_left, color: AppTheme.neonPrimary),
+                  rightChevronIcon: Icon(Icons.chevron_right, color: AppTheme.neonPrimary),
+                ),
+                calendarStyle: const CalendarStyle(
+                  defaultTextStyle: TextStyle(color: AppTheme.textDark),
+                  weekendTextStyle: TextStyle(color: AppTheme.neonPrimary),
+                  outsideTextStyle: TextStyle(color: Colors.grey),
+                  todayDecoration: BoxDecoration(color: Color(0xFFE0E7FF), shape: BoxShape.circle),
+                  selectedDecoration: BoxDecoration(color: AppTheme.neonPrimary, shape: BoxShape.circle),
+                ),
+                daysOfWeekStyle: const DaysOfWeekStyle(
+                  weekdayStyle: TextStyle(color: AppTheme.textGrey),
+                  weekendStyle: TextStyle(color: AppTheme.neonPrimary),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 32),
+          const FadeInSlide(delay: 0.4, child: Text("HORAIRE", style: TextStyle(color: AppTheme.textGrey, fontSize: 11, letterSpacing: 1.2, fontWeight: FontWeight.bold))),
+          const SizedBox(height: 12),
+          FadeInSlide(
+            delay: 0.45,
+            child: Wrap(
+              spacing: 12,
+              children: [
+                _buildSelectionCard("Flexible", Icons.all_inclusive, _flexibility == "Flexible", () {
+                  setState(() { _flexibility = "Flexible"; _missionTime = null; });
+                }),
+                _buildSelectionCard(
+                    _missionTime?.format(context) ?? "Choisir l'heure",
+                    Icons.access_time_filled,
+                    _flexibility == "Fixe",
+                        () async {
+                      setState(() => _flexibility = "Fixe");
+                      final t = await showTimePicker(
+                          context: context,
+                          initialTime: TimeOfDay.now(),
+                          builder: (context, child) {
+                            return Theme(
+                              data: ThemeData.light().copyWith(
+                                colorScheme: const ColorScheme.light(
+                                  primary: AppTheme.neonPrimary,
+                                  onPrimary: Colors.white,
+                                  surface: Colors.white,
+                                  onSurface: AppTheme.textDark,
+                                ),
+                              ),
+                              child: child!,
+                            );
+                          }
+                      );
+                      if(t != null) setState(() => _missionTime = t);
+                    }
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // BUILD PRINCIPAL
+  // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+// BUILD PRINCIPAL
+// ---------------------------------------------------------------------------
+  @override
+  Widget build(BuildContext context) {
+    final double progress = (_currentStep + 1) / _totalSteps;
+
+    // ✅ Détection clavier fiable (même avec d'autres MediaQuery autour)
+    final double keyboardInsetPx =
+        WidgetsBinding.instance.platformDispatcher.views.first.viewInsets.bottom;
+    final bool isKeyboardOpen = keyboardInsetPx > 0;
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: AppTheme.bgLight,
+        resizeToAvoidBottomInset: true,
+
+        body: GestureDetector(
+          onTap: () => FocusScope.of(context).unfocus(),
+          behavior: HitTestBehavior.translucent,
+          child: SafeArea(
+            top: false,
+            child: Stack(
+              children: [
+                // --- ORBES DE FOND ---
+                Positioned(
+                  top: -100,
+                  right: -100,
+                  child: Container(
+                    width: 300,
+                    height: 300,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppTheme.neonPrimary.withOpacity(0.1),
+                    ),
+                  ).simplify(),
+                ),
+                Positioned(
+                  bottom: 50,
+                  left: -50,
+                  child: Container(
+                    width: 400,
+                    height: 400,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: AppTheme.neonCyan.withOpacity(0.1),
+                    ),
+                  ).simplify(),
+                ),
+                Positioned.fill(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 40, sigmaY: 40),
+                    child: Container(color: Colors.transparent),
+                  ),
+                ),
+
+                // --- CONTENU AVEC SAFE AREA INTERNE ---
+                SafeArea(
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      children: [
+                        // HEADER
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 16,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              GestureDetector(
+                                onTap: _prevPage,
+                                child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.white,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.grey.shade200,
+                                        blurRadius: 10,
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.arrow_back,
+                                    color: AppTheme.textDark,
+                                    size: 20,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                "ÉTAPE ${_currentStep + 1} / $_totalSteps",
+                                style: const TextStyle(
+                                  color: AppTheme.textGrey,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 44),
+                            ],
+                          ),
+                        ),
+
+                        // BARRE DE PROGRESSION
+                        Container(
+                          height: 6,
+                          width: double.infinity,
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: FractionallySizedBox(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: progress,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [AppTheme.neonPrimary, AppTheme.neonCyan],
+                                ),
+                                borderRadius: BorderRadius.circular(3),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppTheme.neonPrimary.withOpacity(0.4),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // CONTENU (PAGEVIEW)
+                        Expanded(
+                          child: _loading
+                              ? const Center(
+                            child: CircularProgressIndicator(
+                              color: AppTheme.neonPrimary,
+                            ),
+                          )
+                              : PageView(
+                            controller: _pageController,
+                            physics: const NeverScrollableScrollPhysics(),
+                            children: [
+                              _buildStep1(),
+                              _buildStep2(),
+                              _buildStep3(),
+                              _buildStep4(),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // BOUTON CONTINUER / PUBLIER
+        bottomNavigationBar: isKeyboardOpen
+            ? null
+            : SafeArea(
+          top: false,
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.9),
+              border: Border(
+                top: BorderSide(color: Colors.grey.shade200),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _submitting ? null : _nextPage,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      padding: EdgeInsets.zero,
+                      shadowColor: Colors.transparent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [
+                            AppTheme.neonPrimary,
+                            Color(0xFF4F46E5),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow:
+                        AppTheme.coloredShadow(AppTheme.neonPrimary),
+                      ),
+                      child: SizedBox(
+                        height: 60,
+                        child: Center(
+                          child: _submitting
+                              ? const CircularProgressIndicator(
+                            color: Colors.white,
+                          )
+                              : Row(
+                            mainAxisAlignment:
+                            MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                _currentStep == _totalSteps - 1
+                                    ? "PUBLIER LA MISSION"
+                                    : "CONTINUER",
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Icon(
+                                Icons.arrow_forward_rounded,
+                                color: Colors.white,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Helper pour retrouver l'icône d'après le nom
+  IconData _getIconForCategory(String? categoryName) {
+    if (categoryName == null) return Icons.category;
+    final cat = _categoriesList.firstWhere(
+          (element) => element['name'] == categoryName,
+      orElse: () => {"icon": Icons.category},
+    );
+    return cat['icon'];
+  }
+}
+
+extension on Widget {
+  Widget simplify() => this;
 }

@@ -1,117 +1,169 @@
 [
   /* -----------------------------------------------------------
-     GLOBAL CLEAN
+     CLEAN GLOBAL
   ----------------------------------------------------------- */
-  { "featureType": "poi", "stylers": [ { "visibility": "off" } ] },
   { "featureType": "transit", "stylers": [ { "visibility": "off" } ] },
+  { "featureType": "poi.business", "stylers": [ { "visibility": "off" } ] },
   { "elementType": "labels.icon", "stylers": [ { "visibility": "off" } ] },
 
   /* -----------------------------------------------------------
-     BACKGROUND
+     FOND TERRE & EAU (inspi Apple Maps)
   ----------------------------------------------------------- */
   {
-    "featureType": "landscape",
+    "featureType": "landscape.man_made",
     "elementType": "geometry.fill",
     "stylers": [
-      { "color": "#E8EBF0" }    /* Fond doux et premium */
+      { "color": "#EEF3D6" }      /* zones urbaines / champs clairs */
+    ]
+  },
+  {
+    "featureType": "landscape.natural",
+    "elementType": "geometry.fill",
+    "stylers": [
+      { "color": "#D4E8A4" }      /* collines / forêts plus vertes */
+    ]
+  },
+  {
+    "featureType": "landscape",
+    "elementType": "geometry.stroke",
+    "stylers": [
+      { "color": "#C7D2AA" },
+      { "weight": 0.3 }
     ]
   },
   {
     "featureType": "water",
     "elementType": "geometry.fill",
     "stylers": [
-      { "color": "#C9D7E8" }   /* Eau pastel moderne */
+      { "color": "#8BC5FF" }      /* bleu plus vif */
+    ]
+  },
+  {
+    "featureType": "water",
+    "elementType": "labels.text.fill",
+    "stylers": [
+      { "color": "#5F83AF" }
     ]
   },
 
   /* -----------------------------------------------------------
-     CITY LABELS — ⭐ Très visibles de loin (Airbnb-like)
+     LABELS VILLES / PAYS
   ----------------------------------------------------------- */
+  {
+    "featureType": "administrative.locality",
+    "elementType": "labels",
+    "stylers": [
+      { "visibility": "on" }
+    ]
+  },
   {
     "featureType": "administrative.locality",
     "elementType": "labels.text.fill",
     "stylers": [
-      { "color": "#1E1E1E" },      /* très foncé pour lisibilité */
-      { "weight": 8.0 }            /* épaisseur “bold” */
+      { "color": "#222222" },
+      { "weight": 7.0 }
     ]
   },
   {
     "featureType": "administrative.locality",
     "elementType": "labels.text.stroke",
     "stylers": [
-      { "color": "#FFFFFF" },      /* halo blanc lisible */
+      { "color": "#FFFFFF" },
       { "weight": 3.0 }
     ]
   },
+  {
+    "featureType": "administrative.country",
+    "elementType": "labels",
+    "stylers": [
+      { "visibility": "off" }
+    ]
+  },
 
-  /* -----------------------------------------------------------
-     COUNTRY + ADMIN
-  ----------------------------------------------------------- */
+
+  /* Bordures pays / régions */
   {
     "featureType": "administrative.country",
     "elementType": "geometry.stroke",
     "stylers": [
-      { "color": "#9CA3AF" }       /* gris élégant */
+      { "color": "#A6B497" },
+      { "weight": 0.7 }
     ]
   },
 
   /* -----------------------------------------------------------
-     ROADS
+     ROUTES — FINES, GRIS CLAIR, AVEC NOMS
   ----------------------------------------------------------- */
 
-  /* Highways grossis, premium */
+  /* Autoroutes */
   {
     "featureType": "road.highway",
     "elementType": "geometry.fill",
     "stylers": [
-      { "color": "#FDFDFD" }
+      { "color": "#F9FAF5" }
     ]
   },
   {
     "featureType": "road.highway",
     "elementType": "geometry.stroke",
     "stylers": [
-      { "color": "#B8B8B8" },
-      { "weight": 1.2 }
+      { "color": "#B8BFB0" },
+      { "weight": 0.9 }
     ]
   },
 
-  /* Main Roads */
+  /* Grandes routes */
   {
     "featureType": "road.arterial",
     "elementType": "geometry.fill",
     "stylers": [
-      { "color": "#FCFCFC" }
+      { "color": "#FAFBF8" }
     ]
   },
   {
     "featureType": "road.arterial",
     "elementType": "geometry.stroke",
     "stylers": [
-      { "color": "#D0D0D0" },
-      { "weight": 1.0 }
+      { "color": "#CED4C6" },
+      { "weight": 0.7 }
     ]
   },
 
-  /* Local roads minimalistes (sans labels) */
-  { "featureType": "road.local", "elementType": "labels", "stylers": [ { "visibility": "off" } ] },
+  /* Petites routes */
   {
     "featureType": "road.local",
     "elementType": "geometry",
     "stylers": [
-      { "color": "#FFFFFF" },
+      { "color": "#E4E8DD" },
       { "weight": 0.4 }
     ]
   },
 
+  /* ✅ Labels de routes ON : noms de rues visibles mais sobres */
+  {
+    "featureType": "road",
+    "elementType": "labels.text.fill",
+    "stylers": [
+      { "color": "#707070" }
+    ]
+  },
+  {
+    "featureType": "road",
+    "elementType": "labels.text.stroke",
+    "stylers": [
+      { "color": "#FFFFFF" },
+      { "weight": 2.5 }
+    ]
+  },
+
   /* -----------------------------------------------------------
-     PARKS (vert pastel premium)
+     PARCS & FORÊTS
   ----------------------------------------------------------- */
   {
     "featureType": "poi.park",
     "elementType": "geometry.fill",
     "stylers": [
-      { "color": "#DCEED6" }
+      { "color": "#C2E493" }
     ]
   }
 ]

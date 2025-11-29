@@ -13,10 +13,11 @@ class CardMission extends StatelessWidget {
     this.onTap,
   });
 
-  // --- PALETTE PREMIUM ---
-  static const Color _accentColor = Color(0xFF6C63FF);
-  static const Color _primaryText = Color(0xFF1C1C1E);
-  static const Color _secondaryText = Color(0xFF8E8E93);
+  // --- PALETTE FUTURISTE (Light Mode) ---
+  static const Color _neonPrimary = Color(0xFF6C63FF); // Violet électrique
+  static const Color _neonCyan = Color(0xFF00B8D4); // Cyan
+  static const Color _textDark = Color(0xFF1A1F36); // Noir profond
+  static const Color _textGrey = Color(0xFF6E7787); // Gris tech
 
   @override
   Widget build(BuildContext context) {
@@ -25,7 +26,8 @@ class CardMission extends StatelessWidget {
     final title = '${m['title'] ?? 'Mission'}';
     final budget = '${m['budget'] ?? 0} €';
     final location = '${m['location'] ?? 'Sur place'}';
-    final status = m['status'] ?? 'open';
+    final String rawStatus = (m['status'] ?? 'open').toString();
+    final String status = _normalizeMissionStatus(rawStatus);
     final offersCount = m['offersCount'] ?? 0;
     final Timestamp? deadline = m['deadline'];
 
@@ -37,23 +39,23 @@ class CardMission extends StatelessWidget {
     final deadlineText = _getDeadlineText(deadline);
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      // --- DÉCORATION GLASSMORPHISM / FUTURISTE ---
       decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.8), // Fond blanc translucide
         borderRadius: BorderRadius.circular(24),
-        gradient: const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.white, Color(0xFFF8F8F9)],
-        ),
+        border: Border.all(color: Colors.white, width: 1.5), // Bordure nette
         boxShadow: [
+          // Ombre portée colorée (Glow effect)
           BoxShadow(
-            color: _accentColor.withOpacity(0.08),
+            color: _neonPrimary.withOpacity(0.15),
             blurRadius: 20,
             offset: const Offset(0, 8),
           ),
+          // Ombre de profondeur légère
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 6,
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 5,
             offset: const Offset(0, 2),
           ),
         ],
@@ -64,127 +66,142 @@ class CardMission extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(24),
-          splashColor: _accentColor.withOpacity(0.05),
-          highlightColor: _accentColor.withOpacity(0.02),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: Row(
+          splashColor: _neonPrimary.withOpacity(0.1),
+          highlightColor: _neonCyan.withOpacity(0.05),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                // --- BANDELETTE VIOLETTE ---
-                Container(
-                  width: 6,
-                  color: _accentColor,
+                // --- LIGNE DU HAUT : HEADER ---
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 1. INDICATEUR VISUEL (Barre dégradée)
+                    Container(
+                      width: 4,
+                      height: 45,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(2),
+                        gradient: const LinearGradient(
+                          colors: [_neonPrimary, _neonCyan],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _neonPrimary.withOpacity(0.4),
+                            blurRadius: 6,
+                          )
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+
+                    // 2. TITRE ET PRIX
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800, // Très gras
+                              color: _textDark,
+                              height: 1.2,
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          // PRIX AVEC STYLE NÉON
+                          Text(
+                            budget,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: _neonPrimary, // Prix en violet
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(width: 12),
+
+                    // 3. AVATAR (Avec bordure lumineuse)
+                    Hero(
+                      tag:
+                      'mission_poster_${m['id'] ?? title}_${photo ?? "x"}',
+                      child: Container(
+                        padding: const EdgeInsets.all(2), // Espace bordure
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: const LinearGradient(
+                            colors: [_neonPrimary, _neonCyan],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _neonPrimary.withOpacity(0.2),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: CircleAvatar(
+                          radius: 24,
+                          backgroundColor: Colors.white,
+                          backgroundImage:
+                          photo != null ? NetworkImage(photo) : null,
+                          child: photo == null
+                              ? const Icon(Icons.person,
+                              size: 24, color: _textGrey)
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
 
-                // --- CONTENU ---
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // --- HEADER ---
-                        // --- HEADER ---
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // TITRE + PRIX – FLEXIBLE (à gauche)
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    title,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                      color: _primaryText,
-                                      height: 1.2,
-                                      letterSpacing: -0.2,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    budget,
-                                    style: const TextStyle(
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w800,
-                                      color: _accentColor,
-                                      letterSpacing: -0.5,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                const SizedBox(height: 16),
 
-                            const SizedBox(width: 16),
-
-                            // PHOTO À DROITE
-                            Hero(
-                              tag:
-                              'mission_poster_${m['id'] ?? title}_${photo ?? "x"}',
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(16),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.08),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 3),
-                                    ),
-                                  ],
-                                ),
-                                child: CircleAvatar(
-                                  radius: 26,
-                                  backgroundColor: const Color(0xFFF2F2F7),
-                                  backgroundImage:
-                                  photo != null ? NetworkImage(photo) : null,
-                                  child: photo == null
-                                      ? const Icon(Icons.person,
-                                      size: 26, color: _secondaryText)
-                                      : null,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-
-
-                        const SizedBox(height: 16),
-
-                        // --- CHIPS INFO ---
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 8,
-                          children: [
-                            _greyChip(Icons.place_rounded, location),
-                            _greyChip(
-                                Icons.calendar_today_rounded, deadlineText),
-                          ],
-                        ),
-
-                        const SizedBox(height: 20),
-
-                        // --- STATUT + OFFRES ---
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            StatusBadge(type: 'mission', status: status),
-
-                            if (status == 'open')
-                              _offerChip(offersCount)
-                            else if (status == 'in_progress')
-                              _simpleStatus('En cours', Colors.blueAccent)
-                            else if (status == 'done')
-                                _simpleStatus('Terminée', Colors.green),
-                          ],
-                        ),
-                      ],
+                // --- LIGNE DU MILIEU : ADRESSE + DATE SUR UNE SEULE LIGNE ---
+                Row(
+                  children: [
+                    // Adresse : prend tout l'espace restant, se coupe avec ...
+                    Expanded(
+                      child: _glassChip(
+                        Icons.place_outlined,
+                        location,
+                        maxLines: 1,
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 8),
+                    // Date : taille minimale, jamais sur 2 lignes
+                    _glassChip(
+                      Icons.calendar_today_outlined,
+                      deadlineText,
+                      maxLines: 1,
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                // --- LIGNE DU BAS : STATUT & OFFRES ---
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    StatusBadge(type: 'mission', status: status),
+
+                    if (status == 'open') _gradientOfferChip(offersCount),
+                  ],
                 ),
               ],
             ),
@@ -194,51 +211,65 @@ class CardMission extends StatelessWidget {
     );
   }
 
-  // --- WIDGETS ---
+  // --- WIDGETS INTERNES ---
 
-  Widget _greyChip(IconData icon, String text) {
+  // Chip style "Verre" (Fond blanc léger, bordure fine)
+  Widget _glassChip(
+      IconData icon,
+      String text, {
+        int maxLines = 1,
+      }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF4F4F6),
-        borderRadius: BorderRadius.circular(10),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: _secondaryText),
+          Icon(icon, size: 14, color: _neonPrimary),
           const SizedBox(width: 6),
-
           Flexible(
             child: Text(
               text,
-              maxLines: 1,
+              maxLines: maxLines,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 12.5,
-                color: _secondaryText,
+                fontSize: 13,
+                color: _textGrey,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
-
         ],
       ),
     );
   }
 
-
-
-  Widget _offerChip(int count) {
+  // Badge Offres avec dégradé complet
+  Widget _gradientOfferChip(int count) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF2C2C2E),
+        gradient: const LinearGradient(
+          colors: [_neonPrimary, Color(0xFF4F46E5)], // Violet vers Indigo
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.20),
-            blurRadius: 6,
+            color: _neonPrimary.withOpacity(0.4),
+            blurRadius: 8,
             offset: const Offset(0, 3),
           ),
         ],
@@ -246,7 +277,7 @@ class CardMission extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.person, size: 14, color: Colors.white),
+          const Icon(Icons.people_alt_rounded, size: 14, color: Colors.white),
           const SizedBox(width: 6),
           Text(
             "$count offre${count > 1 ? 's' : ''}",
@@ -254,6 +285,7 @@ class CardMission extends StatelessWidget {
               color: Colors.white,
               fontSize: 13,
               fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
             ),
           ),
         ],
@@ -261,30 +293,7 @@ class CardMission extends StatelessWidget {
     );
   }
 
-  Widget _simpleStatus(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.check_circle_rounded, size: 16, color: color),
-          const SizedBox(width: 6),
-          Text(
-            text,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  // --- HELPERS ---
 
   String _getDeadlineText(Timestamp? t) {
     if (t == null) return 'Non spécifiée';
@@ -298,5 +307,15 @@ class CardMission extends StatelessWidget {
     if (diff == 0) return 'Aujourd’hui';
     if (diff == 1) return 'Demain';
     return DateFormat('dd MMM', 'fr_FR').format(date);
+  }
+
+  String _normalizeMissionStatus(String raw) {
+    raw = raw.toLowerCase();
+
+    // alias back-end → front propre
+    if (raw == 'completed') return 'done'; // Terminée
+    if (raw == 'inprogress') return 'in_progress';
+
+    return raw; // open, in_progress, done, cancelled, closed...
   }
 }

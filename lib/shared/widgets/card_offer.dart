@@ -1,5 +1,3 @@
-// lib/shared/widgets/card_offer.dart
-
 import 'package:flutter/material.dart';
 import 'package:mamission/shared/widgets/status_badge.dart';
 
@@ -15,40 +13,59 @@ class CardOffer extends StatelessWidget {
     this.onTap,
   });
 
-  // Couleurs premium
-  static const Color _accentColor = Color(0xFF6C63FF);
-  static const Color _darkText = Color(0xFF1A1A1A);
-  static const Color _subText = Color(0xFF88889D);
-  static const Color _bgWhite = Colors.white;
+  // --- PALETTE FUTURISTE (Light Mode) ---
+  static const Color _neonPrimary = Color(0xFF6C63FF); // Violet électrique
+  static const Color _neonCyan = Color(0xFF00B8D4); // Cyan
+  static const Color _textDark = Color(0xFF1A1F36); // Noir profond
+  static const Color _textGrey = Color(0xFF6E7787); // Gris tech
 
   @override
   Widget build(BuildContext context) {
-    final title = missionData['title'] ?? 'Mission inconnue';
+    final title = missionData['title'] ?? 'Mission';
     final location = missionData['location'] ?? '—';
-    final photo = missionData['photoUrl'];
-    final offerPrice = offerData['price'] ?? 0;
-    final offerStatus = offerData['status'] ?? 'pending';
 
-    // 🔥 SI OFFRE ANNULÉE → Design "Ghost" (Désactivé mais propre)
-    if (offerStatus == 'cancelled') {
-      return _buildCancelledCard(title);
-    }
+    // --- Données mission / offre ---
+    final String missionStatus =
+    (missionData['status'] ?? 'open').toString().toLowerCase();
+    final String assignedTo = (missionData['assignedTo'] ?? '').toString();
+
+    final String offerUserId = (offerData['userId'] ?? '').toString();
+
+    // prix : on prend toujours la dernière valeur connue
+    final double offerPrice = ((offerData['lastPrice'] ??
+        offerData['counterOffer'] ??
+        offerData['price'] ??
+        0) as num)
+        .toDouble();
+
+    final String rawOfferStatus =
+    (offerData['status'] ?? 'pending').toString().toLowerCase();
+
+    // statut “intelligent” en fonction mission + offre
+    final String displayStatus = _computeEffectiveStatus(
+      missionStatus: missionStatus,
+      rawOfferStatus: rawOfferStatus,
+      assignedTo: assignedTo,
+      offerUserId: offerUserId,
+    );
+
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      // --- DÉCORATION GLASSMORPHISM / FUTURISTE (comme CardMission) ---
       decoration: BoxDecoration(
-        color: _bgWhite,
+        color: Colors.white.withOpacity(0.8),
         borderRadius: BorderRadius.circular(24),
-        // Ombre subtile et colorée (Glow effect léger)
+        border: Border.all(color: Colors.white, width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: _accentColor.withOpacity(0.08),
+            color: _neonPrimary.withOpacity(0.15),
             blurRadius: 20,
             offset: const Offset(0, 8),
           ),
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 4,
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 5,
             offset: const Offset(0, 2),
           ),
         ],
@@ -57,212 +74,111 @@ class CardOffer extends StatelessWidget {
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(24),
         child: InkWell(
-          borderRadius: BorderRadius.circular(24),
           onTap: onTap,
-          splashColor: _accentColor.withOpacity(0.05),
-          highlightColor: _accentColor.withOpacity(0.02),
+          borderRadius: BorderRadius.circular(24),
+          splashColor: _neonPrimary.withOpacity(0.05),
+          highlightColor: _neonCyan.withOpacity(0.05),
           child: Padding(
-            padding: const EdgeInsets.all(18),
+            padding: const EdgeInsets.all(16),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ----------------------- HEADER -----------------------
+                // --- LIGNE DU HAUT : BARRE + TITRE + PRIX ---
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // PHOTO AVEC EFFET DE PROFONDEUR
-                    Hero(
-                      tag: 'mission_photo_${missionData['id'] ?? title}',
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
+                    // Barre dégradée (comme CardMission)
+                    Container(
+                      width: 4,
+                      height: 45,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(2),
+                        gradient: const LinearGradient(
+                          colors: [_neonPrimary, _neonCyan],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
                         ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(18),
-                          child: (photo != null && '$photo'.isNotEmpty)
-                              ? Image.network(
-                            '$photo',
-                            width: 60,
-                            height: 60,
-                            fit: BoxFit.cover,
-                          )
-                              : Container(
-                            width: 60,
-                            height: 60,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  Colors.grey.shade100,
-                                  Colors.grey.shade300
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                            ),
-                            child: Icon(Icons.work_outline_rounded,
-                                color: Colors.grey.shade500, size: 28),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _neonPrimary.withOpacity(0.4),
+                            blurRadius: 6,
                           ),
-                        ),
+                        ],
                       ),
                     ),
+                    const SizedBox(width: 12),
 
-                    const SizedBox(width: 16),
-
-                    // INFO COLONNE
+                    // Titre + statut
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // ROW: Title + Badge alignés intelligemment
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: -0.3,
-                                    color: _darkText,
-                                    fontFamily: 'Plus Jakarta Sans', // Idée font
-                                  ),
-                                ),
-                              ),
-                            ],
+                          Text(
+                            title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: _textDark,
+                              letterSpacing: -0.3,
+                              height: 1.2,
+                            ),
                           ),
-
-                          const SizedBox(height: 6),
-
-                          // LOCATION CHIP SIMPLIFIÉ
-                          Row(
-                            children: [
-                              Icon(Icons.location_on_rounded,
-                                  size: 14, color: _accentColor),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  location,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: _subText,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-
-                          const SizedBox(height: 10),
-
-                          // BADGE DÉPLACÉ ICI POUR L'ÉQUILIBRE
-                          Align(
+                          const SizedBox(height: 8),
+                          Transform.scale(
+                            scale: 0.9,
                             alignment: Alignment.centerLeft,
-                            child: Transform.scale(
-                              scale: 0.9,
-                              alignment: Alignment.centerLeft,
-                              child: StatusBadge(type: 'offer', status: offerStatus),
+                            child: StatusBadge(
+                              type: 'offer',
+                              status: displayStatus,
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ],
-                ),
 
-                const SizedBox(height: 20),
+                    const SizedBox(width: 12),
 
-                // LIGNE DE SÉPARATION SUBTILE
-                Divider(height: 1, color: Colors.grey.withOpacity(0.1)),
-                const SizedBox(height: 16),
-
-                // -------------------- BOTTOM ROW ----------------------
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // PRICE BLOCK
+                    // Prix + flèche
                     Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          "Votre offre".toUpperCase(), // <--- On le fait ici
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: _subText.withOpacity(0.7),
-                            // plus de 'uppercase: true' ici
+                          "${offerPrice.toStringAsFixed(0)} €",
+                          style: const TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.w900,
+                            color: _neonPrimary,
+                            letterSpacing: -0.5,
                           ),
                         ),
-                        const SizedBox(height: 2),
-                        RichText(
-                          text: TextSpan(
-                            children: [
-                              TextSpan(
-                                text: "$offerPrice",
-                                style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.w800,
-                                  color: _darkText,
-                                  letterSpacing: -0.5,
-                                ),
-                              ),
-                              const TextSpan(
-                                text: " €",
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w700,
-                                  color: _accentColor,
-                                ),
-                              ),
-                            ],
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: _neonPrimary.withOpacity(0.08),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 16,
+                            color: _neonPrimary,
                           ),
                         ),
                       ],
                     ),
-
-                    const Spacer(),
-
-                    // ACTION BUTTON (Arrondi et moderne)
-                    ElevatedButton(
-                      onPressed: onTap,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF4F2FF), // Light Purple bg
-                        foregroundColor: _accentColor,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 14),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          Text(
-                            "Détails",
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          SizedBox(width: 6),
-                          Icon(Icons.arrow_forward_rounded, size: 16),
-                        ],
-                      ),
-                    ),
                   ],
+                ),
+
+                const SizedBox(height: 16),
+
+                // --- LIGNE DU MILIEU : VILLE SEULE, COMME UNE CHIP ---
+                _glassChip(
+                  Icons.place_outlined,
+                  location.toString(),
+                  maxLines: 1, // une seule ligne, "..." si trop long
                 ),
               ],
             ),
@@ -272,57 +188,109 @@ class CardOffer extends StatelessWidget {
     );
   }
 
-  // ----------------------- CARD ANNULÉE (GHOST) -------------------------
-  Widget _buildCancelledCard(String title) {
+  // --------------------------------------------------------------------------
+  // CHIP VERRE (copie du style CardMission)
+  // --------------------------------------------------------------------------
+  Widget _glassChip(
+      IconData icon,
+      String text, {
+        int maxLines = 1,
+      }) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAFA), // Gris très clair
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFEEEEEE)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFEBEE), // Rouge très pâle
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.close_rounded,
-                color: Color(0xFFE57373), size: 20),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade400, // Texte "off"
-                    decoration: TextDecoration.lineThrough, // Barré
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  "Offre annulée",
-                  style: TextStyle(
-                    color: Color(0xFFE57373),
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
-                ),
-              ],
+          Icon(icon, size: 14, color: _neonPrimary),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              text,
+              maxLines: maxLines,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                color: _textGrey,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  // --------------------------------------------------------------------------
+  // LOGIQUE STATUT (mission + offre)
+  // --------------------------------------------------------------------------
+  String _computeEffectiveStatus({
+    required String missionStatus,
+    required String rawOfferStatus,
+    required String assignedTo,
+    required String offerUserId,
+  }) {
+    missionStatus = missionStatus.toLowerCase();
+    rawOfferStatus = rawOfferStatus.toLowerCase();
+
+    // 1️⃣ Mission annulée → info importante côté prestataire
+    if (missionStatus == 'cancelled') {
+      return 'mission_cancelled';
+    }
+
+    // 2️⃣ Offre annulée par le prestataire
+    if (rawOfferStatus == 'cancelled') {
+      return 'cancelled';
+    }
+
+    // 3️⃣ Offre refusée / non retenue (explicite)
+    if (rawOfferStatus == 'declined' || rawOfferStatus == 'refused') {
+      return 'declined';
+    }
+
+    // 4️⃣ Offre expirée
+    if (rawOfferStatus == 'expired') {
+      return 'expired';
+    }
+
+    // 5️⃣ Offre acceptée → on RESTE sur "acceptée"
+    //    même si la mission passe ensuite en done/closed
+    if (rawOfferStatus == 'accepted') {
+      return 'accepted';
+    }
+
+    // 6️⃣ Mission attribuée à quelqu’un d’autre → "Non retenue"
+    if ((missionStatus == 'in_progress' ||
+        missionStatus == 'done' ||
+        missionStatus == 'completed' ||
+        missionStatus == 'closed') &&
+        assignedTo.isNotEmpty &&
+        assignedTo != offerUserId) {
+      return 'not_selected';
+    }
+
+    // 7️⃣ En négociation / contre-offre
+    if (rawOfferStatus == 'negotiating' || rawOfferStatus == 'countered') {
+      return 'negotiating';
+    }
+
+    // 8️⃣ Mission ouverte : offre en attente
+    if (missionStatus == 'open' && rawOfferStatus == 'pending') {
+      return 'pending';
+    }
+
+    // 9️⃣ Fallback : statut brut (mais on n’a plus "mission_done"/"closed" ici)
+    return rawOfferStatus;
   }
 }
