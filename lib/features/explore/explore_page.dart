@@ -17,7 +17,7 @@ import 'package:mamission/shared/widgets/card_mission.dart';
 import 'package:mamission/app/colors.dart';
 import 'package:mamission/shared/apple_appbar.dart';
 import 'package:mamission/features/explore/all_providers_page.dart';
-
+import 'package:mamission/core/secrets.dart';
 // --- FIN DES IMPORTS ---
 // --- BOITE FRANCE MÉTROPOLITAINE ---
 final LatLngBounds kFranceBounds = LatLngBounds(
@@ -127,10 +127,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   final ValueNotifier<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _missions =
   ValueNotifier([]);
 
-  static const String kPlacesApiKey =
-      "AIzaSyCXltusJoTE4wN04ETzYqLUSFRzRcX7DhY";
+  static const String kPlacesApiKey = Secrets.googleMapApiKey;
 
-  // Liste catégories (pour modale)
   final List<Map<String, dynamic>> _categoriesList = [
     {
       "name": "Bricolage",

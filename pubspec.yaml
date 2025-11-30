@@ -12,7 +12,8 @@ dependencies:
     sdk: flutter
 
   # --- INDISPENSABLE POUR LA ZONE D'INTERVENTION ---
-  http: ^1.1.0
+  http: ^0.13.6
+
 
   # --- LOCALISATION (ALIGNE LE BIEN COMME ICI) ---
   flutter_localizations:
@@ -55,6 +56,7 @@ dependencies:
   freezed_annotation: ^2.4.4
   flutter_local_notifications: ^18.0.1
   table_calendar: ^3.1.2 # <-- AJOUTEZ ÇA
+  cloud_functions: ^5.6.2
 
 dev_dependencies:
   flutter_test:

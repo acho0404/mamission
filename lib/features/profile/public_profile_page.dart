@@ -13,11 +13,11 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:photo_view/photo_view_gallery.dart';
-
+import 'package:mamission/core/secrets.dart';
 // --- IMPORTS PROJET ---
 import 'package:mamission/shared/apple_appbar.dart';
 import 'package:mamission/features/reviews/reviews_page.dart';
-
+import 'package:mamission/features/profile/user_repository.dart';
 // --- CONSTANTES ---
 const Color kPrimary = Color(0xFF6C63FF);
 const Color kBackground = Color(0xFFF7F9FC);
@@ -26,7 +26,7 @@ const Color kTextGrey = Color(0xFF9EA3AE);
 const Color kErrorRed = Color(0xFFFF4B4B); // Rouge erreur
 
 // 🔥 METS TA CLÉ GOOGLE ICI 🔥
-const String kGoogleApiKey = "AIzaSyCXltusJoTE4wN04ETzYqLUSFRzRcX7DhY";
+const String kGoogleApiKey = Secrets.googleMapApiKey;
 
 const List<String> kAllSkills = [
   'Électricité', 'Plomberie', 'Jardinage', 'Ménage',
@@ -152,42 +152,40 @@ class _PublicProfilePageState extends State<PublicProfilePage> {
   }
 
   // --- SAUVEGARDE AVEC VALIDATION STRICTE ---
+  // --- SAUVEGARDE PROPRE (VIA REPOSITORY) ---
   Future<void> _saveProfile(String uid, bool isPro, StateSetter setSheetState) async {
     // 1. Validation Ville
     if (_cityInputCtrl.text.isNotEmpty && !_isCitySelectedFromList) {
       setSheetState(() {
         _cityErrorText = "Veuillez sélectionner une ville dans la liste suggérée.";
       });
-      return; // On arrête tout si pas valide
+      return;
     } else {
       setSheetState(() => _cityErrorText = null);
     }
 
-    // 2. Début Sauvegarde (Loader tourne)
+    // 2. Début Sauvegarde
     setSheetState(() => _saving = true);
 
     try {
-      String fullName = "${_firstNameCtrl.text.trim()} ${_lastNameCtrl.text.trim()}".trim();
-      if (fullName.isEmpty) fullName = "Utilisateur";
-
-      if (fullName.isNotEmpty) await _auth.currentUser?.updateDisplayName(fullName);
-
-      await _db.collection('users').doc(uid).set({
-        'name': fullName,
-        'bio': _bioCtrl.text.trim(),
-        'tagline': _taglineCtrl.text.trim(),
-        'city': _cityInputCtrl.text.trim(),
-        'radius': _interventionRadius,
-        'skills': _currentSkills,
-        'equipments': _currentEquipments,
-        'isProvider': isPro,
-        'photoUrl': _tempProfilePicUrl,
-        'portfolio': _tempPortfolioUrls,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      // APPEL AU REPOSITORY (Code métier isolé)
+      await UserRepository().updateProfile(
+        uid: uid,
+        firstName: _firstNameCtrl.text.trim(),
+        lastName: _lastNameCtrl.text.trim(),
+        bio: _bioCtrl.text.trim(),
+        tagline: _taglineCtrl.text.trim(),
+        city: _cityInputCtrl.text.trim(),
+        radius: _interventionRadius,
+        skills: _currentSkills,
+        equipments: _currentEquipments,
+        isProvider: isPro,
+        photoUrl: _tempProfilePicUrl,
+        portfolio: _tempPortfolioUrls,
+      );
 
       if (!mounted) return;
-      Navigator.of(context).pop(); // Ferme la modal UNE FOIS FINI
+      Navigator.of(context).pop(); // Ferme la modal
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erreur sauvegarde: $e")));
     } finally {

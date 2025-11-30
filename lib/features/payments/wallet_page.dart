@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:mamission/shared/apple_appbar.dart';
-
+import 'package:mamission/features/payments/payment_service.dart';
 class WalletPage extends StatelessWidget {
   const WalletPage({super.key});
 
@@ -112,9 +112,30 @@ class WalletPage extends StatelessWidget {
                   icon: Icons.add,
                   label: "Recharger",
                   color: const Color(0xFF6C63FF),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text("Module de paiement (Stripe) à venir")));
+                  // DANS le Widget build, sous "_buildActionButton(..., label: "Recharger", ...)"
+
+                  onTap: () async {
+                    try {
+                      // Exemple : On recharge 20€ (Tu pourras mettre un Dialog pour choisir le montant)
+                      await PaymentService().makePayment(20.00);
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("✅ Rechargement réussi !"),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+
+                      // TODO: Ici, rafraîchir le solde (via un Provider)
+
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text("Erreur : ${e.toString().replaceAll("Exception: ", "")}"),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
                   },
                 ),
                 const SizedBox(width: 16),

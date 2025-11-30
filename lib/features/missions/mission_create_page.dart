@@ -14,6 +14,7 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:flutter/services.dart';
+import 'package:mamission/features/missions/mission_repository.dart';
 // -----------------------------------------------------------------------------
 // THEME FUTURISTE CLAIR (Light Cyberpunk)
 // -----------------------------------------------------------------------------
@@ -206,50 +207,62 @@ class _MissionCreatePageState extends State<MissionCreatePage> {
   Future<void> _saveMission() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedCategory == null || _missionDate == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Catégorie et date requises"), backgroundColor: Colors.red));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Catégorie et date requises"), backgroundColor: Colors.red),
+      );
       return;
     }
+
     setState(() => _submitting = true);
+
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw Exception("Non connecté");
+      // 1. Upload Photo (si présente)
       String? photoUrl;
       if (_photoFile != null) {
-        final ref = FirebaseStorage.instance.ref().child("missions/${DateTime.now().millisecondsSinceEpoch}.jpg");
+        final ref = FirebaseStorage.instance
+            .ref()
+            .child("missions/${DateTime.now().millisecondsSinceEpoch}.jpg");
         await ref.putFile(_photoFile!);
         photoUrl = await ref.getDownloadURL();
       }
-      double? lat, lng;
+
+      // 2. Géocodage (Adresse -> Lat/Lng)
+      Map<String, double>? position;
       if (_locationCtrl.text.isNotEmpty) {
         try {
+          // Petit délai pour éviter le spam API si nécessaire
           final res = await locationFromAddress(_locationCtrl.text);
-          if (res.isNotEmpty) { lat = res.first.latitude; lng = res.first.longitude; }
-        } catch (_) {}
+          if (res.isNotEmpty) {
+            position = {"lat": res.first.latitude, "lng": res.first.longitude};
+          }
+        } catch (_) {
+          // On continue même si le géocodage échoue (la mission sera sans map)
+        }
       }
-      final userData = (await FirebaseFirestore.instance.collection('users').doc(user.uid).get()).data() ?? {};
-      final String? timeStr = _missionTime != null ? "${_missionTime!.hour.toString().padLeft(2,'0')}:${_missionTime!.minute.toString().padLeft(2,'0')}" : null;
-      final data = {
-        "title": _titleCtrl.text.trim(), "description": _descCtrl.text.trim(),
-        "duration": double.tryParse(_durationCtrl.text) ?? 0, "budget": double.tryParse(_budgetCtrl.text) ?? 0,
-        "category": _selectedCategory, "location": _locationCtrl.text.trim(),
-        "mode": _mode, "flexibility": _flexibility,
-        "deadline": Timestamp.fromDate(_missionDate!), "missionTime": timeStr,
-        "position": lat != null ? {"lat": lat, "lng": lng} : null,
-        "updatedAt": FieldValue.serverTimestamp(),
-      };
-      if (widget.editMissionId == null) {
-        await FirebaseFirestore.instance.collection('missions').add({
-          ...data, "posterId": user.uid, "posterName": userData['name'] ?? 'User',
-          "posterPhotoUrl": userData['photoUrl'] ?? '', "posterRating": userData['rating'] ?? 0.0,
-          "posterReviewsCount": userData['reviewsCount'] ?? 0, "photoUrl": photoUrl ?? '',
-          "status": "open", "offersCount": 0, "createdAt": FieldValue.serverTimestamp(),
-        });
-      } else {
-        final doc = FirebaseFirestore.instance.collection('missions').doc(widget.editMissionId);
-        final oldData = await doc.get();
-        await doc.update({ ...data, "photoUrl": photoUrl ?? oldData.data()?['photoUrl'] ?? '', });
-      }
-      if(mounted) Navigator.pop(context);
+
+      // 3. Formatage de l'heure
+      final String? timeStr = _missionTime != null
+          ? "${_missionTime!.hour.toString().padLeft(2, '0')}:${_missionTime!.minute.toString().padLeft(2, '0')}"
+          : null;
+
+      // 4. APPEL AU REPOSITORY (Sauvegarde)
+      await MissionRepository().saveMission(
+        missionId: widget.editMissionId,
+        title: _titleCtrl.text.trim(),
+        description: _descCtrl.text.trim(),
+        budget: double.tryParse(_budgetCtrl.text) ?? 0,
+        duration: double.tryParse(_durationCtrl.text) ?? 0,
+        deadline: _missionDate!,
+        timeStr: timeStr,
+        category: _selectedCategory!,
+        location: _locationCtrl.text.trim(),
+        mode: _mode,
+        flexibility: _flexibility,
+        position: position,
+        photoUrl: photoUrl,
+      );
+
+      if (mounted) Navigator.pop(context); // Retour à l'accueil
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Erreur: $e")));
     } finally {

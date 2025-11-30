@@ -8,7 +8,8 @@ import 'firebase_options.dart';
 import 'app/app.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
+import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:mamission/core/secrets.dart';
 // ---------------------------------------------------------------------------
 // 🔥 PATCH 1 : Handler Background placé tout en haut (obligatoire)
 // ---------------------------------------------------------------------------
@@ -27,6 +28,8 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   print('✅ Firebase initialisée.');
+  Stripe.publishableKey = Secrets.stripePublishableKey;
+  await Stripe.instance.applySettings();
 
   // ---------------------------------------------------------------------------
   // 🔥 PATCH 2 : enregistrer le handler background AVANT _initFCM()
