@@ -19,6 +19,7 @@ class _ThreadsPageState extends State<ThreadsPage>
   late final TabController _tabController;
 
   final String myUid = FirebaseAuth.instance.currentUser!.uid;
+
   Future<void> _syncChatsWithMissions() async {
     try {
       final qs = await FirebaseFirestore.instance
@@ -63,7 +64,6 @@ class _ThreadsPageState extends State<ThreadsPage>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _syncChatsWithMissions(); // 👈 ajout important
-
   }
 
   @override
@@ -88,12 +88,6 @@ class _ThreadsPageState extends State<ThreadsPage>
         s == 'closed' ||
         s == 'paid';
   }
-
-
-
-
-
-
 
   // ---------------------------------------------------------------------------
   // 🔹 Streams
@@ -205,7 +199,8 @@ class _ThreadsPageState extends State<ThreadsPage>
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                        child: const Text("Annuler", style: TextStyle(color: Colors.black87)),
+                        child: const Text("Annuler",
+                            style: TextStyle(color: Colors.black87)),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -222,7 +217,9 @@ class _ThreadsPageState extends State<ThreadsPage>
                         ),
                         child: const Text(
                           "Supprimer",
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
                     ),
@@ -281,11 +278,13 @@ class _ThreadsPageState extends State<ThreadsPage>
               // --- TAB BAR FLOTTANTE (GLASSMORPHISM) ---
               Container(
                 height: 52,
-                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                margin:
+                const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.7),
                   borderRadius: BorderRadius.circular(40),
-                  border: Border.all(color: Colors.white.withOpacity(0.4), width: 1.5),
+                  border: Border.all(
+                      color: Colors.white.withOpacity(0.4), width: 1.5),
                   boxShadow: [
                     BoxShadow(
                       color: const Color(0xFF6C63FF).withOpacity(0.1),
@@ -319,7 +318,10 @@ class _ThreadsPageState extends State<ThreadsPage>
                       indicatorSize: TabBarIndicatorSize.tab,
                       labelColor: Colors.white,
                       unselectedLabelColor: const Color(0xFF6C63FF),
-                      labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, fontFamily: 'Plus Jakarta Sans'),
+                      labelStyle: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          fontFamily: 'Plus Jakarta Sans'),
                       dividerColor: Colors.transparent,
                       tabs: const [
                         Tab(text: "Boîte de réception"),
@@ -374,14 +376,14 @@ class _ThreadsPageState extends State<ThreadsPage>
           final isArchived = _isThreadArchived(missionStatusRaw);
 
           return isArchiveTab ? isArchived : !isArchived;
-
         }).toList();
-
 
         // --- EMPTY STATE ---
         if (filteredDocs.isEmpty) {
-          final icon = isArchiveTab ? Icons.archive_outlined : Icons.chat_bubble_outline_rounded;
-          final label = isArchiveTab ? "Aucune archive" : "Aucune conversation";
+          final icon =
+          isArchiveTab ? Icons.archive_outlined : Icons.chat_bubble_outline_rounded;
+          final label =
+          isArchiveTab ? "Aucune archive" : "Aucune conversation";
           final subLabel = isArchiveTab
               ? "Vos anciennes discussions apparaîtront ici."
               : "Lancez une conversation pour commencer.";
@@ -396,44 +398,58 @@ class _ThreadsPageState extends State<ThreadsPage>
                     color: Colors.white.withOpacity(0.5),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(icon, size: 48, color: Colors.grey.shade300),
+                  child: Icon(icon,
+                      size: 48, color: Colors.grey.shade300),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   label,
-                  style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.bold, fontSize: 16),
+                  style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   subLabel,
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey.shade400, fontSize: 13),
+                  style: TextStyle(
+                      color: Colors.grey.shade400, fontSize: 13),
                 ),
               ],
             ),
           );
         }
 
-        // --- LISTE ANIMÉE ---
-        return ListView.separated(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          itemCount: filteredDocs.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12), // Espacement plus aéré
-          itemBuilder: (context, i) {
-            final doc = filteredDocs[i];
-            final data = doc.data();
+        // --- LISTE ANIMÉE (avec AnimatedSwitcher pour un switch ultra fluide) ---
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: ListView.separated(
+            key: ValueKey(isArchiveTab ? 'archive_list' : 'inbox_list'),
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            cacheExtent: 800, // pré-rendu → impression de charge instantanée
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            itemCount: filteredDocs.length,
+            separatorBuilder: (_, __) =>
+            const SizedBox(height: 12), // Espacement plus aéré
+            itemBuilder: (context, i) {
+              final doc = filteredDocs[i];
+              final data = doc.data();
 
-            final missionStatusRaw = (data['missionStatus'] ?? '').toString();
-            final isArchived = _isThreadArchived(missionStatusRaw);
+              final missionStatusRaw = (data['missionStatus'] ?? '').toString();
+              final isArchived = _isThreadArchived(missionStatusRaw);
 
-
-
-            // Animation Staggered (cascade)
-            return _StaggeredEntryCard(
-              index: i,
-              child: _buildThreadItem(doc, isArchived: isArchived),
-            );
-          },
+              // Animation Staggered (cascade)
+              return _StaggeredEntryCard(
+                index: i,
+                child: _buildThreadItem(doc, isArchived: isArchived),
+              );
+            },
+          ),
         );
       },
     );
@@ -504,15 +520,20 @@ class _ThreadsPageState extends State<ThreadsPage>
                   borderRadius: BorderRadius.circular(20),
                   onLongPress: isArchived
                       ? null
-                      : () => _showThreadOptions(context, chatId, isMuted, otherId, name),
+                      : () => _showThreadOptions(
+                      context, chatId, isMuted, otherId, name),
                   onTap: () async {
-                    await FirebaseFirestore.instance.collection('chats').doc(chatId).update({
+                    await FirebaseFirestore.instance
+                        .collection('chats')
+                        .doc(chatId)
+                        .update({
                       'readBy': FieldValue.arrayUnion([myUid]),
                     });
 
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => ChatDetailPage(chatId: chatId)),
+                      MaterialPageRoute(
+                          builder: (_) => ChatDetailPage(chatId: chatId)),
                     );
                   },
                   child: Padding(
@@ -525,20 +546,25 @@ class _ThreadsPageState extends State<ThreadsPage>
                             Container(
                               decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white, width: 2),
+                                  border: Border.all(
+                                      color: Colors.white, width: 2),
                                   boxShadow: [
                                     BoxShadow(
                                       color: Colors.black.withOpacity(0.05),
                                       blurRadius: 5,
                                       offset: const Offset(0, 2),
                                     )
-                                  ]
-                              ),
+                                  ]),
                               child: CircleAvatar(
                                 radius: 26,
-                                backgroundImage: photo.isNotEmpty ? NetworkImage(photo) : null,
+                                backgroundImage: photo.isNotEmpty
+                                    ? NetworkImage(photo)
+                                    : null,
                                 backgroundColor: Colors.grey.shade100,
-                                child: photo.isEmpty ? const Icon(Icons.person, color: Colors.grey) : null,
+                                child: photo.isEmpty
+                                    ? const Icon(Icons.person,
+                                    color: Colors.grey)
+                                    : null,
                               ),
                             ),
                             if (isOnline && !isArchived)
@@ -550,7 +576,8 @@ class _ThreadsPageState extends State<ThreadsPage>
                                   height: 14,
                                   decoration: BoxDecoration(
                                     color: const Color(0xFF00C853), // Vert vif
-                                    border: Border.all(color: Colors.white, width: 2.5),
+                                    border: Border.all(
+                                        color: Colors.white, width: 2.5),
                                     shape: BoxShape.circle,
                                   ),
                                 ),
@@ -569,9 +596,11 @@ class _ThreadsPageState extends State<ThreadsPage>
                                 Row(
                                   children: [
                                     Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 3),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFF6C63FF).withOpacity(0.1),
+                                        color: const Color(0xFF6C63FF)
+                                            .withOpacity(0.1),
                                         borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: Text(
@@ -602,8 +631,7 @@ class _ThreadsPageState extends State<ThreadsPage>
                                         style: TextStyle(
                                             fontSize: 10,
                                             color: Colors.grey.shade400,
-                                            fontWeight: FontWeight.w500
-                                        ),
+                                            fontWeight: FontWeight.w500),
                                       ),
                                   ],
                                 ),
@@ -612,7 +640,8 @@ class _ThreadsPageState extends State<ThreadsPage>
 
                               // 2. Nom & Heure
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                MainAxisAlignment.spaceBetween,
                                 children: [
                                   Flexible(
                                     child: Text(
@@ -620,10 +649,11 @@ class _ThreadsPageState extends State<ThreadsPage>
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
-                                          fontWeight: isUnread && !isArchived ? FontWeight.w800 : FontWeight.w600,
+                                          fontWeight: isUnread && !isArchived
+                                              ? FontWeight.w800
+                                              : FontWeight.w600,
                                           fontSize: 16,
-                                          color: Colors.black87
-                                      ),
+                                          color: Colors.black87),
                                     ),
                                   ),
                                   Row(
@@ -631,26 +661,44 @@ class _ThreadsPageState extends State<ThreadsPage>
                                     children: [
                                       if (isMuted && !isArchived)
                                         const Padding(
-                                          padding: EdgeInsets.only(right: 6),
-                                          child: Icon(Icons.volume_off_rounded, size: 16, color: Colors.grey),
+                                          padding:
+                                          EdgeInsets.only(right: 6),
+                                          child: Icon(
+                                            Icons.volume_off_rounded,
+                                            size: 16,
+                                            color: Colors.grey,
+                                          ),
                                         ),
                                       Text(
                                         time,
                                         style: TextStyle(
-                                            color: isUnread && !isArchived ? const Color(0xFF6C63FF) : Colors.grey.shade400,
+                                            color: isUnread && !isArchived
+                                                ? const Color(0xFF6C63FF)
+                                                : Colors.grey.shade400,
                                             fontSize: 12,
-                                            fontWeight: isUnread && !isArchived ? FontWeight.w600 : FontWeight.normal
-                                        ),
+                                            fontWeight: isUnread &&
+                                                !isArchived
+                                                ? FontWeight.w600
+                                                : FontWeight.normal),
                                       ),
                                       if (isArchived) ...[
                                         const SizedBox(width: 8),
                                         InkWell(
-                                          borderRadius: BorderRadius.circular(16),
+                                          borderRadius:
+                                          BorderRadius.circular(16),
                                           onTap: () async {
-                                            final confirmed = await _confirmDeleteThread(name);
-                                            if (confirmed) await _deleteForMe(chatId);
+                                            final confirmed =
+                                            await _confirmDeleteThread(
+                                                name);
+                                            if (confirmed) {
+                                              await _deleteForMe(chatId);
+                                            }
                                           },
-                                          child: const Icon(Icons.more_horiz_rounded, size: 20, color: Colors.grey),
+                                          child: const Icon(
+                                            Icons.more_horiz_rounded,
+                                            size: 20,
+                                            color: Colors.grey,
+                                          ),
                                         ),
                                       ],
                                     ],
@@ -668,16 +716,20 @@ class _ThreadsPageState extends State<ThreadsPage>
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
-                                          color: isUnread && !isArchived ? const Color(0xFF2D2D3A) : const Color(0xFF9EA3AE),
+                                          color: isUnread && !isArchived
+                                              ? const Color(0xFF2D2D3A)
+                                              : const Color(0xFF9EA3AE),
                                           fontSize: 14,
-                                          fontWeight: isUnread && !isArchived ? FontWeight.w600 : FontWeight.w400,
-                                          height: 1.3
-                                      ),
+                                          fontWeight: isUnread && !isArchived
+                                              ? FontWeight.w600
+                                              : FontWeight.w400,
+                                          height: 1.3),
                                     ),
                                   ),
                                   if (isUnread && !isArchived)
                                     Container(
-                                      margin: const EdgeInsets.only(left: 12),
+                                      margin:
+                                      const EdgeInsets.only(left: 12),
                                       width: 10,
                                       height: 10,
                                       decoration: const BoxDecoration(
@@ -687,10 +739,8 @@ class _ThreadsPageState extends State<ThreadsPage>
                                             BoxShadow(
                                                 color: Color(0x4D6C63FF),
                                                 blurRadius: 6,
-                                                offset: Offset(0, 2)
-                                            )
-                                          ]
-                                      ),
+                                                offset: Offset(0, 2))
+                                          ]),
                                     ),
                                 ],
                               ),
@@ -709,11 +759,13 @@ class _ThreadsPageState extends State<ThreadsPage>
     );
   }
 
-  void _showThreadOptions(BuildContext context, String chatId, bool isMuted, String otherUid, String otherName) {
+  void _showThreadOptions(BuildContext context, String chatId, bool isMuted,
+      String otherUid, String otherName) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
         return SafeArea(
           child: Wrap(
@@ -722,38 +774,63 @@ class _ThreadsPageState extends State<ThreadsPage>
               Center(
                 child: Container(
                   margin: const EdgeInsets.only(top: 10, bottom: 20),
-                  width: 40, height: 4,
-                  decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(10)),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(10)),
                 ),
               ),
               ListTile(
                 leading: Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), shape: BoxShape.circle),
-                  child: Icon(isMuted ? Icons.notifications_active_rounded : Icons.notifications_off_rounded, color: Colors.blue),
+                  decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      shape: BoxShape.circle),
+                  child: Icon(
+                      isMuted
+                          ? Icons.notifications_active_rounded
+                          : Icons.notifications_off_rounded,
+                      color: Colors.blue),
                 ),
-                title: Text(isMuted ? "Réactiver les notifications" : "Mettre en sourdine", style: const TextStyle(fontWeight: FontWeight.w600)),
+                title: Text(
+                    isMuted
+                        ? "Réactiver les notifications"
+                        : "Mettre en sourdine",
+                    style:
+                    const TextStyle(fontWeight: FontWeight.w600)),
                 onTap: () => _toggleMute(chatId, isMuted),
               ),
               ListTile(
                 leading: Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), shape: BoxShape.circle),
-                  child: const Icon(Icons.delete_outline_rounded, color: Colors.red),
+                  decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.1),
+                      shape: BoxShape.circle),
+                  child: const Icon(Icons.delete_outline_rounded,
+                      color: Colors.red),
                 ),
-                title: const Text("Supprimer pour moi", style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+                title: const Text("Supprimer pour moi",
+                    style: TextStyle(
+                        color: Colors.red,
+                        fontWeight: FontWeight.w600)),
                 onTap: () async {
-                  final confirmed = await _confirmDeleteThread(otherName);
+                  final confirmed =
+                  await _confirmDeleteThread(otherName);
                   if (confirmed) await _deleteForMe(chatId);
                 },
               ),
               ListTile(
                 leading: Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.grey.withOpacity(0.1), shape: BoxShape.circle),
-                  child: const Icon(Icons.block_rounded, color: Colors.black54),
+                  decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.1),
+                      shape: BoxShape.circle),
+                  child: const Icon(Icons.block_rounded,
+                      color: Colors.black54),
                 ),
-                title: const Text("Bloquer / Signaler", style: TextStyle(fontWeight: FontWeight.w600)),
+                title: const Text("Bloquer / Signaler",
+                    style: TextStyle(fontWeight: FontWeight.w600)),
                 onTap: () => _blockUser(chatId, otherUid),
               ),
               const SizedBox(height: 20),
@@ -790,19 +867,25 @@ class _AnimatedOrb extends StatefulWidget {
   final double size;
   final Duration duration;
 
-  const _AnimatedOrb({required this.color, required this.size, this.duration = const Duration(seconds: 4)});
+  const _AnimatedOrb(
+      {required this.color,
+        required this.size,
+        this.duration = const Duration(seconds: 4)});
 
   @override
   State<_AnimatedOrb> createState() => _AnimatedOrbState();
 }
 
-class _AnimatedOrbState extends State<_AnimatedOrb> with SingleTickerProviderStateMixin {
+class _AnimatedOrbState extends State<_AnimatedOrb>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: widget.duration)..repeat(reverse: true);
+    _controller = AnimationController(
+        vsync: this, duration: widget.duration)
+      ..repeat(reverse: true);
   }
 
   @override
@@ -821,7 +904,8 @@ class _AnimatedOrbState extends State<_AnimatedOrb> with SingleTickerProviderSta
           child: Container(
             width: widget.size,
             height: widget.size,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: widget.color),
+            decoration:
+            BoxDecoration(shape: BoxShape.circle, color: widget.color),
           ),
         );
       },
@@ -839,14 +923,19 @@ class _BouncingButton extends StatefulWidget {
   State<_BouncingButton> createState() => _BouncingButtonState();
 }
 
-class _BouncingButtonState extends State<_BouncingButton> with SingleTickerProviderStateMixin {
+class _BouncingButtonState extends State<_BouncingButton>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   final double _scaleFactor = 0.97;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 100), lowerBound: 0.0, upperBound: 1.0);
+    _controller = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 100),
+        lowerBound: 0.0,
+        upperBound: 1.0);
   }
 
   @override
@@ -864,7 +953,8 @@ class _BouncingButtonState extends State<_BouncingButton> with SingleTickerProvi
       child: AnimatedBuilder(
         animation: _controller,
         builder: (_, child) {
-          final scale = 1 - (_controller.value * (1 - _scaleFactor));
+          final scale =
+              1 - (_controller.value * (1 - _scaleFactor));
           return Transform.scale(scale: scale, child: child);
         },
         child: widget.child,
@@ -874,6 +964,7 @@ class _BouncingButtonState extends State<_BouncingButton> with SingleTickerProvi
 }
 
 /// Animation d'entrée en cascade (Staggered)
+/// Animation d'entrée en cascade (Staggered)
 class _StaggeredEntryCard extends StatelessWidget {
   final int index;
   final Widget child;
@@ -882,34 +973,37 @@ class _StaggeredEntryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final delay = Duration(milliseconds: (index * 50).clamp(0, 500));
+    // petit décalage entre les items pour l'effet "cascade"
+    final delay = Duration(milliseconds: (index * 50).clamp(0, 400));
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
-      duration: const Duration(milliseconds: 600),
-      curve: Interval(0.0, 1.0, curve: Curves.easeOutBack),
-      builder: (context, value, child) {
+      duration: const Duration(milliseconds: 260), // effet plus "260Hz"
+      curve: Curves.easeOutCubic,
+      builder: (context, value, innerChild) {
         return Transform.translate(
-          offset: Offset(0, 30 * (1 - value)), // Glisse du bas vers le haut
+          offset: Offset(0, 16 * (1 - value)), // glisse subtile du bas
           child: Opacity(
-            opacity: value.clamp(0.0, 1.0),
+            opacity: value,
             child: Transform.scale(
-              scale: 0.95 + (0.05 * value), // Léger zoom in
-              child: child,
+              scale: 0.98 + (0.02 * value), // léger zoom in
+              child: innerChild,
             ),
           ),
         );
       },
+      // ⚠️ Ici on garde le hack du Future.delayed pour le délai
       child: FutureBuilder(
         future: Future.delayed(delay),
         builder: (context, snapshot) {
-          // Astuce visuelle : on attend le délai avant de lancer l'animation via le builder
-          return child!;
+          // Quand le délai est passé, on rend le vrai child
+          return child;
         },
       ),
     );
   }
 }
+
 
 /// Squelette de chargement élégant
 class _ThreadsSkeletonList extends StatefulWidget {
@@ -919,13 +1013,17 @@ class _ThreadsSkeletonList extends StatefulWidget {
   State<_ThreadsSkeletonList> createState() => _ThreadsSkeletonListState();
 }
 
-class _ThreadsSkeletonListState extends State<_ThreadsSkeletonList> with SingleTickerProviderStateMixin {
+class _ThreadsSkeletonListState extends State<_ThreadsSkeletonList>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..repeat(reverse: true);
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..repeat(reverse: true);
   }
 
   @override
@@ -937,16 +1035,20 @@ class _ThreadsSkeletonListState extends State<_ThreadsSkeletonList> with SingleT
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
+      physics: const BouncingScrollPhysics(
+        parent: AlwaysScrollableScrollPhysics(),
+      ),
       padding: const EdgeInsets.symmetric(vertical: 12),
       itemCount: 6,
       itemBuilder: (context, index) {
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          padding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: AnimatedBuilder(
             animation: _controller,
             builder: (context, child) {
               return Opacity(
-                opacity: 0.3 + (_controller.value * 0.4),
+                opacity: 0.35 + (_controller.value * 0.35),
                 child: Container(
                   height: 80,
                   decoration: BoxDecoration(
@@ -956,16 +1058,40 @@ class _ThreadsSkeletonListState extends State<_ThreadsSkeletonList> with SingleT
                   child: Row(
                     children: [
                       const SizedBox(width: 16),
-                      Container(width: 50, height: 50, decoration: const BoxDecoration(color: Color(0xFFF0F0F0), shape: BoxShape.circle)),
+                      Container(
+                        width: 50,
+                        height: 50,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFF0F0F0),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
                       const SizedBox(width: 16),
                       Expanded(
                         child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisAlignment:
+                          MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(width: 120, height: 12, decoration: BoxDecoration(color: const Color(0xFFF0F0F0), borderRadius: BorderRadius.circular(4))),
+                            Container(
+                              width: 120,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF0F0F0),
+                                borderRadius:
+                                BorderRadius.circular(4),
+                              ),
+                            ),
                             const SizedBox(height: 8),
-                            Container(width: 200, height: 10, decoration: BoxDecoration(color: const Color(0xFFF0F0F0), borderRadius: BorderRadius.circular(4))),
+                            Container(
+                              width: 200,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF0F0F0),
+                                borderRadius:
+                                BorderRadius.circular(4),
+                              ),
+                            ),
                           ],
                         ),
                       )

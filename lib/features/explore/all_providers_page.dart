@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:go_router/go_router.dart';
 import 'package:mamission/shared/apple_appbar.dart';
 
 // -----------------------------------------------------------------------------
-// THEME & CONSTANTES (Même ADN que MissionCreatePage)
+// THEME & CONSTANTES
 // -----------------------------------------------------------------------------
 class AppTheme {
   static const Color bgLight = Color(0xFFF3F6FF);
@@ -25,8 +27,9 @@ class AppTheme {
       ),
       boxShadow: [
         BoxShadow(
-          color:
-          isSelected ? neonPrimary.withOpacity(0.25) : Colors.black.withOpacity(0.03),
+          color: isSelected
+              ? neonPrimary.withOpacity(0.25)
+              : Colors.black.withOpacity(0.03),
           blurRadius: 20,
           offset: const Offset(0, 10),
         ),
@@ -36,7 +39,7 @@ class AppTheme {
 }
 
 // -----------------------------------------------------------------------------
-// PAGE PRINCIPALE : RECHERCHE PRESTATAIRE
+// PAGE PRINCIPALE : VITRINE PRESTATAIRES
 // -----------------------------------------------------------------------------
 class AllProvidersPage extends StatefulWidget {
   const AllProvidersPage({super.key});
@@ -49,15 +52,14 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
   // --- ÉTAT DES FILTRES ---
   String _searchQuery = "";
   String _selectedCategory = "Tous";
-  RangeValues _priceRange = const RangeValues(0, 300); // Prix min/max
+  RangeValues _priceRange = const RangeValues(0, 200);
   bool _onlyVerified = false;
   double _minRating = 0.0;
-  String _sortBy = "Pertinence"; // Pertinence, Prix croiss., Notes
-  String _selectedZone = "Partout"; // Partout, ≤ 5 km, ≤ 10 km, ≤ 20 km
+  String _sortBy = "Pertinence";
+  String _selectedZone = "Partout"; // pour plus tard (distance réelle)
 
-
-  // --- DONNÉES MOCK (Simule Firebase) ---
-  final List<String> _categories = [
+  // catégories “visuelles”
+  final List<String> _categories = const [
     "Tous",
     "⚡ Élec",
     "🔧 Plomberie",
@@ -67,151 +69,86 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
     "🎨 Design",
   ];
 
-  final List<Map<String, dynamic>> _allProviders = [
-    {
-      "id": "1",
-      "name": "Achraf M.",
-      "job": "Ingénieur Fullstack",
-      "location": "Grenoble",
-      "distance": "2.5 km",
-      "rating": 4.9,
-      "reviews": 124,
-      "jobs_done": 45,
-      "img": "https://i.pravatar.cc/300?img=11",
-      "price": 35,
-      "verified": true,
-      "cat": "💻 Dev"
-    },
-    {
-      "id": "2",
-      "name": "Sarah L.",
-      "job": "Architecte d'intérieur",
-      "location": "Lyon",
-      "distance": "15 km",
-      "rating": 4.8,
-      "reviews": 89,
-      "jobs_done": 32,
-      "img": "https://i.pravatar.cc/300?img=5",
-      "price": 60,
-      "verified": true,
-      "cat": "🎨 Design"
-    },
-    {
-      "id": "3",
-      "name": "Jean-Pierre",
-      "job": "Plombier Artisan",
-      "location": "Paris 12",
-      "distance": "0.8 km",
-      "rating": 4.5,
-      "reviews": 210,
-      "jobs_done": 560,
-      "img": "https://i.pravatar.cc/300?img=3",
-      "price": 50,
-      "verified": true,
-      "cat": "🔧 Plomberie"
-    },
-    {
-      "id": "4",
-      "name": "Moussa D.",
-      "job": "Électricien Bâtiment",
-      "location": "Marseille",
-      "distance": "5 km",
-      "rating": 5.0,
-      "reviews": 42,
-      "jobs_done": 88,
-      "img": "https://i.pravatar.cc/300?img=8",
-      "price": 45,
-      "verified": false,
-      "cat": "⚡ Élec"
-    },
-    {
-      "id": "5",
-      "name": "Sophie K.",
-      "job": "Femme de ménage",
-      "location": "Grenoble",
-      "distance": "1.2 km",
-      "rating": 4.7,
-      "reviews": 15,
-      "jobs_done": 20,
-      "img": "https://i.pravatar.cc/300?img=9",
-      "price": 25,
-      "verified": true,
-      "cat": "🧹 Ménage"
-    },
-    {
-      "id": "6",
-      "name": "Lucas V.",
-      "job": "Menuisier",
-      "location": "Echirolles",
-      "distance": "6 km",
-      "rating": 4.2,
-      "reviews": 8,
-      "jobs_done": 5,
-      "img": "https://i.pravatar.cc/300?img=12",
-      "price": 40,
-      "verified": false,
-      "cat": "🔨 Bricolage"
-    },
-  ];
+  // ---------------------------------------------------------------------------
+  // FILTRAGE SUR UNE LISTE DE PRESTATAIRES
+  // ---------------------------------------------------------------------------
+  List<Map<String, dynamic>> _applyFilters(
+      List<Map<String, dynamic>> baseList) {
+    List<Map<String, dynamic>> list = baseList.where((p) {
+      final String cat = (p['cat'] as String?) ?? 'Tous';
+      final String name = (p['name'] as String? ?? '').toLowerCase();
+      final String job = (p['job'] as String? ?? '').toLowerCase();
+      final double price =
+      (p['price'] is num) ? (p['price'] as num).toDouble() : 0.0;
+      final bool verified = p['verified'] == true;
+      final double rating =
+      (p['rating'] is num) ? (p['rating'] as num).toDouble() : 0.0;
+      final double? distanceKm =
+      (p['distanceKm'] is num) ? (p['distanceKm'] as num).toDouble() : null;
 
-  // --- LOGIQUE MÉTIER DE FILTRAGE ---
-  // --- LOGIQUE MÉTIER DE FILTRAGE ---
-  List<Map<String, dynamic>> get _filteredList {
-    List<Map<String, dynamic>> list = _allProviders.where((p) {
-      // 1. Filtre Catégorie
-      bool matchCat = _selectedCategory == "Tous" || p['cat'] == _selectedCategory;
+      // 1. Catégorie
+      bool matchCat = _selectedCategory == "Tous" || cat == _selectedCategory;
 
-      // 2. Filtre Texte
-      bool matchSearch = p['name'].toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          p['job'].toLowerCase().contains(_searchQuery.toLowerCase());
+      // 2. Recherche texte
+      final q = _searchQuery.toLowerCase();
+      bool matchSearch =
+          q.isEmpty || name.contains(q) || job.contains(q);
 
-      // 3. Filtre Prix
+      // 3. Prix
       bool matchPrice =
-          p['price'] >= _priceRange.start && p['price'] <= _priceRange.end;
+          price >= _priceRange.start && price <= _priceRange.end;
 
-      // 4. Filtre Vérifié
-      bool matchVerified = !_onlyVerified || p['verified'] == true;
+      // 4. Vérifiés
+      bool matchVerified = !_onlyVerified || verified;
 
-      // 5. Filtre Note
-      bool matchRating = p['rating'] >= _minRating;
+      // 5. Note mini
+      bool matchRating = rating >= _minRating;
 
-      // 6. Filtre Zone (basé sur le champ "distance": "2.5 km")
+      // 6. Zone (optionnelle : si pas de distanceKm, on laisse passer)
       bool matchZone = true;
-      if (_selectedZone != "Partout") {
-        final distStr = (p['distance'] as String?) ?? "";
-        final parts = distStr.split(" ");
-        final km = double.tryParse(parts.isNotEmpty ? parts.first : "") ?? 9999;
-
+      if (_selectedZone != "Partout" && distanceKm != null) {
         if (_selectedZone == "≤ 5 km") {
-          matchZone = km <= 5;
+          matchZone = distanceKm <= 5;
         } else if (_selectedZone == "≤ 10 km") {
-          matchZone = km <= 10;
+          matchZone = distanceKm <= 10;
         } else if (_selectedZone == "≤ 20 km") {
-          matchZone = km <= 20;
+          matchZone = distanceKm <= 20;
         }
       }
 
-      return matchCat && matchSearch && matchPrice && matchVerified && matchRating && matchZone;
+      return matchCat &&
+          matchSearch &&
+          matchPrice &&
+          matchVerified &&
+          matchRating &&
+          matchZone;
     }).toList();
 
     // 7. Tri
     if (_sortBy == "Prix croissant") {
-      list.sort((a, b) => (a['price'] as int).compareTo(b['price'] as int));
+      list.sort((a, b) {
+        final pa =
+        (a['price'] is num) ? (a['price'] as num).toDouble() : 0.0;
+        final pb =
+        (b['price'] is num) ? (b['price'] as num).toDouble() : 0.0;
+        return pa.compareTo(pb);
+      });
     } else if (_sortBy == "Meilleures notes") {
-      list.sort((a, b) => (b['rating'] as double).compareTo(a['rating'] as double));
+      list.sort((a, b) {
+        final ra =
+        (a['rating'] is num) ? (a['rating'] as num).toDouble() : 0.0;
+        final rb =
+        (b['rating'] is num) ? (b['rating'] as num).toDouble() : 0.0;
+        return rb.compareTo(ra);
+      });
     }
-    // "Pertinence" = ordre de base
 
     return list;
   }
 
-
-  // --- UI: BOTTOM SHEET FILTRES ---
-  // --- UI: BOTTOM SHEET FILTRES ---
-// 👉 même esprit que "Tous les filtres" de la page Missions,
-// mais adapté à la vitrine prestataires : tarif / vérifiés / note minimale / tri.
-  // --- UI: BOTTOM SHEET FILTRES ---
-// 👉 Tous les filtres vitrine prestataires : Zone, Catégories, Tarif, Garanties, Tri
+  // ---------------------------------------------------------------------------
+  // BOTTOM SHEET FILTRES (inchangé, juste branché sur les états ci-dessus)
+  // ---------------------------------------------------------------------------
   void _openFilterSheet() {
     showModalBottomSheet(
       context: context,
@@ -223,7 +160,6 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
           minChildSize: 0.55,
           maxChildSize: 0.95,
           builder: (context, scrollController) {
-            // options de zone utilisées dans le filtre
             final List<String> zoneOptions = [
               "Partout",
               "≤ 5 km",
@@ -234,7 +170,8 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
             return StatefulBuilder(
               builder: (context, setSheetState) {
                 return ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+                  borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(32)),
                   child: BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                     child: Container(
@@ -251,7 +188,6 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                       child: Column(
                         children: [
                           const SizedBox(height: 10),
-                          // petit handle drag
                           Container(
                             width: 42,
                             height: 5,
@@ -261,7 +197,7 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          Text(
+                          const Text(
                             "TOUS LES FILTRES",
                             style: TextStyle(
                               color: AppTheme.textDark,
@@ -272,11 +208,11 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                           ),
                           const SizedBox(height: 20),
 
-                          // CONTENU SCROLLABLE
                           Expanded(
                             child: ListView(
                               controller: scrollController,
-                              padding: const EdgeInsets.symmetric(horizontal: 24),
+                              padding:
+                              const EdgeInsets.symmetric(horizontal: 24),
                               children: [
                                 // 1. ZONE
                                 const _FilterSectionTitle("Zone"),
@@ -290,8 +226,8 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                       selected: sel,
                                       onSelected: (_) =>
                                           setSheetState(() => _selectedZone = z),
-                                      selectedColor:
-                                      AppTheme.neonPrimary.withOpacity(0.15),
+                                      selectedColor: AppTheme.neonPrimary
+                                          .withOpacity(0.15),
                                       backgroundColor: Colors.white,
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(20),
@@ -305,7 +241,9 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                         color: sel
                                             ? AppTheme.neonPrimary
                                             : AppTheme.textDark,
-                                        fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                                        fontWeight: sel
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
                                       ),
                                     );
                                   }).toList(),
@@ -323,14 +261,17 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                     return ChoiceChip(
                                       label: Text(cat),
                                       selected: sel,
-                                      onSelected: (_) =>
-                                          setSheetState(() => _selectedCategory = cat),
+                                      onSelected: (_) => setSheetState(
+                                              () => _selectedCategory = cat),
                                       selectedColor: AppTheme.neonPrimary,
                                       backgroundColor: Colors.white,
                                       labelStyle: TextStyle(
-                                        color: sel ? Colors.white : AppTheme.textDark,
-                                        fontWeight:
-                                        sel ? FontWeight.w700 : FontWeight.w500,
+                                        color: sel
+                                            ? Colors.white
+                                            : AppTheme.textDark,
+                                        fontWeight: sel
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
                                       ),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(18),
@@ -345,8 +286,11 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                 const _FilterSectionTitle("Trier par"),
                                 Wrap(
                                   spacing: 10,
-                                  children: ["Pertinence", "Prix croissant", "Meilleures notes"]
-                                      .map((sort) {
+                                  children: [
+                                    "Pertinence",
+                                    "Prix croissant",
+                                    "Meilleures notes"
+                                  ].map((sort) {
                                     final isSel = _sortBy == sort;
                                     return ChoiceChip(
                                       label: Text(sort),
@@ -355,9 +299,12 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                           setSheetState(() => _sortBy = sort),
                                       selectedColor: AppTheme.neonPrimary,
                                       labelStyle: TextStyle(
-                                        color: isSel ? Colors.white : AppTheme.textDark,
-                                        fontWeight:
-                                        isSel ? FontWeight.w700 : FontWeight.w500,
+                                        color: isSel
+                                            ? Colors.white
+                                            : AppTheme.textDark,
+                                        fontWeight: isSel
+                                            ? FontWeight.w700
+                                            : FontWeight.w500,
                                       ),
                                       backgroundColor: Colors.grey[100],
                                       side: BorderSide.none,
@@ -370,7 +317,7 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
 
                                 const SizedBox(height: 24),
 
-                                // 4. TARIF HORAIRE
+                                // 4. TARIF
                                 const _FilterSectionTitle("Tarif horaire"),
                                 RangeSlider(
                                   values: _priceRange,
@@ -378,7 +325,8 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                   max: 200,
                                   divisions: 20,
                                   activeColor: AppTheme.neonPrimary,
-                                  inactiveColor: AppTheme.neonPrimary.withOpacity(0.2),
+                                  inactiveColor:
+                                  AppTheme.neonPrimary.withOpacity(0.2),
                                   labels: RangeLabels(
                                     "${_priceRange.start.round()} €/h",
                                     "${_priceRange.end.round()} €/h",
@@ -403,7 +351,8 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                 SwitchListTile.adaptive(
                                   title: const Text(
                                     "Profils vérifiés uniquement",
-                                    style: TextStyle(fontWeight: FontWeight.w600),
+                                    style:
+                                    TextStyle(fontWeight: FontWeight.w600),
                                   ),
                                   value: _onlyVerified,
                                   activeColor: AppTheme.neonPrimary,
@@ -444,7 +393,8 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                   onPressed: () {
                                     setSheetState(() {
                                       _sortBy = "Pertinence";
-                                      _priceRange = const RangeValues(20, 150);
+                                      _priceRange =
+                                      const RangeValues(0, 200);
                                       _onlyVerified = false;
                                       _minRating = 0.0;
                                       _selectedZone = "Partout";
@@ -453,7 +403,8 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                   },
                                   child: const Text(
                                     "Réinitialiser",
-                                    style: TextStyle(fontWeight: FontWeight.w600),
+                                    style:
+                                    TextStyle(fontWeight: FontWeight.w600),
                                   ),
                                 ),
                                 const Spacer(),
@@ -461,13 +412,13 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                                   width: 170,
                                   child: ElevatedButton(
                                     onPressed: () {
-                                      // on applique sur la page principale
                                       setState(() {});
                                       Navigator.pop(context);
                                     },
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: AppTheme.textDark,
-                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 16),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(18),
                                       ),
@@ -499,9 +450,9 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
     );
   }
 
-
-
-  // --- TOGGLE Missions / Prestataires — même style que MissionListPage ---
+  // ---------------------------------------------------------------------------
+  // TOGGLE Missions / Prestataires
+  // ---------------------------------------------------------------------------
   Widget _buildTopToggleRow(BuildContext context) {
     return Container(
       height: 52,
@@ -529,17 +480,15 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
             children: [
               _buildToggleChip(
                 label: 'Missions',
-                selected: false, // 👉 on est sur PRESTATAIRES ici
+                selected: false,
                 onTap: () {
-                  Navigator.pop(context); // retour à Explore (Missions)
+                  Navigator.pop(context);
                 },
               ),
               _buildToggleChip(
                 label: 'Prestataires',
                 selected: true,
-                onTap: () {
-                  // déjà sur cette page
-                },
+                onTap: () {},
               ),
             ],
           ),
@@ -601,8 +550,6 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
   // ---------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final displayList = _filteredList;
-
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark,
       child: Scaffold(
@@ -612,37 +559,49 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
         ),
         body: Stack(
           children: [
-            // --- FOND ORBES FUTURISTES ---
-            Positioned(top: -100, right: -100, child: _buildBlurOrb(AppTheme.neonPrimary)),
-            Positioned(top: 300, left: -50, child: _buildBlurOrb(AppTheme.neonCyan)),
+            Positioned(
+                top: -100,
+                right: -100,
+                child: _buildBlurOrb(AppTheme.neonPrimary)),
+            Positioned(
+                top: 300,
+                left: -50,
+                child: _buildBlurOrb(AppTheme.neonCyan)),
 
-            // --- CONTENU PRINCIPAL ---
             SafeArea(
-              top: false, // on a déjà l'appBar
+              top: false,
               child: Column(
                 children: [
-                  // 1. TOGGLE Missions / Prestataires
                   _buildTopToggleRow(context),
 
-                  // 2. SEARCH & FILTER
+                  // SEARCH
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 10),
                     child: Row(
                       children: [
                         Expanded(
                           child: Container(
                             decoration: AppTheme.glassBox(),
                             child: TextField(
-                              onChanged: (v) => setState(() => _searchQuery = v),
-                              style: const TextStyle(color: AppTheme.textDark),
+                              onChanged: (v) =>
+                                  setState(() => _searchQuery = v),
+                              style:
+                              const TextStyle(color: AppTheme.textDark),
                               decoration: InputDecoration(
-                                hintText: "Rechercher un expert (ex: Plombier...)",
-                                hintStyle:
-                                TextStyle(color: AppTheme.textGrey.withOpacity(0.6)),
-                                prefixIcon:
-                                const Icon(Icons.search, color: AppTheme.neonPrimary),
+                                hintText:
+                                "Rechercher un expert (ex: Plombier...)",
+                                hintStyle: TextStyle(
+                                  color:
+                                  AppTheme.textGrey.withOpacity(0.6),
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.search,
+                                  color: AppTheme.neonPrimary,
+                                ),
                                 border: InputBorder.none,
-                                contentPadding: const EdgeInsets.symmetric(
+                                contentPadding:
+                                const EdgeInsets.symmetric(
                                   horizontal: 20,
                                   vertical: 15,
                                 ),
@@ -665,7 +624,8 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.08),
+                                  color:
+                                  Colors.black.withOpacity(0.08),
                                   blurRadius: 8,
                                   offset: const Offset(0, 3),
                                 ),
@@ -682,39 +642,49 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                     ),
                   ),
 
-                  // 3. CATÉGORIES (Chips Horizontaux)
+                  // CATEGORIES
                   SizedBox(
                     height: 50,
                     child: ListView.builder(
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      padding:
+                      const EdgeInsets.symmetric(horizontal: 20),
                       itemCount: _categories.length,
                       itemBuilder: (ctx, index) {
                         final cat = _categories[index];
                         final isSel = _selectedCategory == cat;
                         return GestureDetector(
-                          onTap: () => setState(() => _selectedCategory = cat),
+                          onTap: () =>
+                              setState(() => _selectedCategory = cat),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 200),
-                            margin: const EdgeInsets.only(right: 10, top: 5, bottom: 5),
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            margin: const EdgeInsets.only(
+                                right: 10, top: 5, bottom: 5),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20),
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: isSel ? AppTheme.neonPrimary : Colors.white.withOpacity(0.7),
+                              color: isSel
+                                  ? AppTheme.neonPrimary
+                                  : Colors.white.withOpacity(0.7),
                               borderRadius: BorderRadius.circular(30),
-                              border: isSel ? null : Border.all(color: Colors.white),
+                              border: isSel
+                                  ? null
+                                  : Border.all(color: Colors.white),
                               boxShadow: isSel
                                   ? [
                                 BoxShadow(
-                                  color: AppTheme.neonPrimary.withOpacity(0.4),
+                                  color: AppTheme.neonPrimary
+                                      .withOpacity(0.4),
                                   blurRadius: 8,
                                   offset: const Offset(0, 2),
                                 )
                               ]
                                   : [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.02),
+                                  color: Colors.black
+                                      .withOpacity(0.02),
                                   blurRadius: 4,
                                 )
                               ],
@@ -722,7 +692,9 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
                             child: Text(
                               cat,
                               style: TextStyle(
-                                color: isSel ? Colors.white : AppTheme.textGrey,
+                                color: isSel
+                                    ? Colors.white
+                                    : AppTheme.textGrey,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -734,33 +706,174 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
 
                   const SizedBox(height: 10),
 
-                  // 4. LISTE DES PRESTATAIRES (GRID)
+                  // LISTE PRESTATAIRES (depuis Firestore)
                   Expanded(
-                    child: displayList.isEmpty
-                        ? _buildEmptyState()
-                        : AnimationLimiter(
-                      child: GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          childAspectRatio: 0.70,
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
-                        ),
-                        itemCount: displayList.length,
-                        itemBuilder: (ctx, index) {
-                          return AnimationConfiguration.staggeredGrid(
-                            position: index,
-                            duration: const Duration(milliseconds: 500),
-                            columnCount: 2,
-                            child: ScaleAnimation(
-                              child: FadeInAnimation(
-                                child: _NeonProviderCard(data: displayList[index]),
-                              ),
-                            ),
+                    child: StreamBuilder<
+                        QuerySnapshot<Map<String, dynamic>>>(
+                      stream: FirebaseFirestore.instance
+                          .collection('users')
+                          .where('isProvider', isEqualTo: true)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
                           );
-                        },
-                      ),
+                        }
+                        if (!snapshot.hasData ||
+                            snapshot.data!.docs.isEmpty) {
+                          return _buildEmptyState();
+                        }
+
+                        // Mapping Firestore -> structure carte
+                        final List<Map<String, dynamic>> rawProviders =
+                        snapshot.data!.docs
+                            .map<Map<String, dynamic>>((doc) {
+                          final d = doc.data();
+
+                          // logique vitrine : abo actif
+                          final String subType =
+                          (d['subType'] ?? 'none') as String;
+                          final String subStatus =
+                          (d['subStatus'] ?? 'none') as String;
+                          final bool subActive =
+                              subStatus == 'active' &&
+                                  (subType == 'standard' ||
+                                      subType == 'pro');
+
+                          if (!subActive) {
+                            // pas dans la vitrine → on filtrera plus tard
+                            return {};
+                          }
+
+                          final String name =
+                          (d['name'] ?? 'Prestataire') as String;
+                          final String job =
+                          (d['tagline'] ?? 'Prestataire MaMission')
+                          as String;
+                          final String city =
+                          (d['city'] ?? 'France') as String;
+
+                          final double rating =
+                          (d['rating'] is num)
+                              ? (d['rating'] as num).toDouble()
+                              : 5.0;
+                          final int reviews =
+                          (d['reviewsCount'] is num)
+                              ? (d['reviewsCount'] as num).toInt()
+                              : 0;
+                          final int missionsDone =
+                          (d['missionsDone'] is num)
+                              ? (d['missionsDone'] as num).toInt()
+                              : 0;
+
+                          final int price =
+                          (d['hourlyRate'] is num)
+                              ? (d['hourlyRate'] as num).toInt()
+                              : 0;
+
+                          final bool verified =
+                              d['verified'] == true;
+
+                          final String? photoUrl =
+                          d['photoUrl'] as String?;
+
+                          final double? distanceKm =
+                          (d['distanceKm'] is num)
+                              ? (d['distanceKm'] as num).toDouble()
+                              : null;
+
+                          // cat visuelle :
+                          String cat = "Tous";
+                          final List skills =
+                              (d['skills'] as List?) ?? [];
+                          if (skills.isNotEmpty &&
+                              skills.first is String) {
+                            final String s = skills.first as String;
+                            if (s.toLowerCase().contains('plomb'))
+                              cat = "🔧 Plomberie";
+                            else if (s.toLowerCase().contains('élec'))
+                              cat = "⚡ Élec";
+                            else if (s.toLowerCase().contains('ménage'))
+                              cat = "🧹 Ménage";
+                            else if (s.toLowerCase().contains('dev') ||
+                                s.toLowerCase().contains('web'))
+                              cat = "💻 Dev";
+                            else if (s.toLowerCase().contains('peinture') ||
+                                s.toLowerCase().contains('bricol'))
+                              cat = "🔨 Bricolage";
+                            else
+                              cat = s;
+                          }
+
+                          return {
+                            'id': doc.id,
+                            'name': name,
+                            'job': job,
+                            'location': city,
+                            'distanceKm': distanceKm,
+                            'distance': distanceKm != null
+                                ? "${distanceKm.toStringAsFixed(1)} km"
+                                : "",
+                            'rating': rating,
+                            'reviews': reviews,
+                            'jobs_done': missionsDone,
+                            'img': photoUrl,
+                            'price': price,
+                            'verified': verified,
+                            'cat': cat,
+                            'subStatus': subStatus,
+                          };
+                        }).where((m) => m.isNotEmpty).toList();
+
+                        final displayList =
+                        _applyFilters(rawProviders);
+
+                        if (displayList.isEmpty) {
+                          return _buildEmptyState();
+                        }
+
+                        return AnimationLimiter(
+                          child: GridView.builder(
+                            padding: const EdgeInsets.fromLTRB(
+                                20, 10, 20, 100),
+                            gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              childAspectRatio: 0.70,
+                              crossAxisSpacing: 16,
+                              mainAxisSpacing: 16,
+                            ),
+                            itemCount: displayList.length,
+                            itemBuilder: (ctx, index) {
+                              final data = displayList[index];
+                              return AnimationConfiguration
+                                  .staggeredGrid(
+                                position: index,
+                                duration: const Duration(
+                                    milliseconds: 500),
+                                columnCount: 2,
+                                child: ScaleAnimation(
+                                  child: FadeInAnimation(
+                                    child: _NeonProviderCard(
+                                      data: data,
+                                      onTap: () {
+                                        context.push(
+                                          '/profile/public',
+                                          extra: {
+                                            'userId': data['id'],
+                                          },
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -772,7 +885,7 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
     );
   }
 
-  // --- WIDGETS HELPER ---
+  // --- helpers visuels ---
   Widget _buildBlurOrb(Color color) {
     return Container(
       width: 300,
@@ -813,202 +926,235 @@ class _AllProvidersPageState extends State<AllProvidersPage> {
 }
 
 // -----------------------------------------------------------------------------
-// WIDGET CARTE PRESTATAIRE "NEON PRO"
+// CARTE PRESTATAIRE “NEON PRO” (cliquable + badge vérifié)
 // -----------------------------------------------------------------------------
 class _NeonProviderCard extends StatelessWidget {
   final Map<String, dynamic> data;
-  const _NeonProviderCard({required this.data});
+  final VoidCallback onTap;
+
+  const _NeonProviderCard({
+    required this.data,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: AppTheme.glassBox(radius: 20, isSelected: false).copyWith(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withOpacity(0.8),
-            Colors.white.withOpacity(0.4),
-          ],
+    final String? imgUrl = data['img'] as String?;
+    final bool isVerified =
+        (data['verified'] == true) ||
+            (data['subStatus'] == 'active');
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: AppTheme.glassBox(radius: 20, isSelected: false).copyWith(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withOpacity(0.8),
+              Colors.white.withOpacity(0.4),
+            ],
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 1. IMAGE + BADGE
-            Expanded(
-              flex: 5,
-              child: Stack(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      image: DecorationImage(
-                        image: CachedNetworkImageProvider(data['img']),
-                        fit: BoxFit.cover,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // IMAGE + BADGE
+              Expanded(
+                flex: 5,
+                child: Stack(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        color: Colors.grey[200],
                       ),
-                    ),
-                  ),
-                  if (data['verified'])
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 4,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.verified,
-                          color: AppTheme.neonPrimary,
-                          size: 14,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: imgUrl != null && imgUrl.isNotEmpty
+                            ? CachedNetworkImage(
+                          imageUrl: imgUrl,
+                          fit: BoxFit.cover,
+                        )
+                            : Icon(
+                          Icons.person,
+                          size: 40,
+                          color: Colors.grey[500],
                         ),
                       ),
                     ),
-                  Positioned(
-                    bottom: 6,
-                    left: 6,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                    if (isVerified)
+                      Positioned(
+                        top: 6,
+                        right: 6,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.star_rounded,
-                                color: Colors.amber,
-                                size: 12,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                "${data['rating']}",
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.1),
+                                blurRadius: 4,
                               ),
                             ],
                           ),
-                        ),
-                      ),
-                    ),
-                  )
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // 2. INFOS
-            Expanded(
-              flex: 4,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        data['name'],
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                          color: AppTheme.textDark,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        data['job'],
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: AppTheme.textGrey,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.location_on,
-                            size: 10,
-                            color: AppTheme.textGrey.withOpacity(0.6),
+                          child: const Icon(
+                            Icons.verified,
+                            color: AppTheme.neonPrimary,
+                            size: 14,
                           ),
-                          const SizedBox(width: 2),
-                          Expanded(
-                            child: Text(
-                              "${data['location']} (${data['distance']})",
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: AppTheme.textGrey.withOpacity(0.8),
-                              ),
+                        ),
+                      ),
+                    Positioned(
+                      bottom: 6,
+                      left: 6,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.star_rounded,
+                                  color: Colors.amber,
+                                  size: 12,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  "${data['rating'] ?? 0}",
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        ],
-                      )
-                    ],
-                  ),
-
-                  // 3. PRIX & ACTION
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "${data['price']}€/h",
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 15,
-                          color: AppTheme.neonPrimary,
                         ),
                       ),
-                      Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [AppTheme.neonPrimary, AppTheme.neonCyan],
-                          ),
-                          borderRadius: BorderRadius.circular(10),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppTheme.neonPrimary.withOpacity(0.3),
-                              blurRadius: 6,
-                              offset: const Offset(0, 3),
-                            )
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.arrow_forward_rounded,
-                          color: Colors.white,
-                          size: 14,
-                        ),
-                      )
-                    ],
-                  )
-                ],
+                    )
+                  ],
+                ),
               ),
-            )
-          ],
+
+              const SizedBox(height: 12),
+
+              // INFOS
+              Expanded(
+                flex: 4,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          data['name'] ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            color: AppTheme.textDark,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          data['job'] ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.textGrey,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.location_on,
+                              size: 10,
+                              color:
+                              AppTheme.textGrey.withOpacity(0.6),
+                            ),
+                            const SizedBox(width: 2),
+                            Expanded(
+                              child: Text(
+                                data['distance'] != null &&
+                                    (data['distance'] as String)
+                                        .isNotEmpty
+                                    ? "${data['location']} (${data['distance']})"
+                                    : (data['location'] ?? ''),
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: AppTheme.textGrey
+                                      .withOpacity(0.8),
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      ],
+                    ),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          "${data['price'] ?? 0}€/h",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                            color: AppTheme.neonPrimary,
+                          ),
+                        ),
+                        Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [
+                                AppTheme.neonPrimary,
+                                AppTheme.neonCyan
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(10),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AppTheme.neonPrimary
+                                    .withOpacity(0.3),
+                                blurRadius: 6,
+                                offset: const Offset(0, 3),
+                              )
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.arrow_forward_rounded,
+                            color: Colors.white,
+                            size: 14,
+                          ),
+                        )
+                      ],
+                    )
+                  ],
+                ),
+              )
+            ],
+          ),
         ),
       ),
     );

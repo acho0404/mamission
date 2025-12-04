@@ -22,6 +22,10 @@ import '../features/auth/register_page.dart';
 import '../features/auth/reset_password_page.dart';
 import '../features/payments/wallet_page.dart'; // Assurez-vous d'avoir créé le fichier
 import '../features/profile/coordonnees_page.dart'; // <-- AJOUTER CETTE LIGNE
+import '../features/payments/banking_page.dart'; // <--- AJOUTE CECI
+import 'package:mamission/features/notifications/notifications_page.dart';
+import 'package:mamission/features/payments/subscription_page.dart';
+
 // --- Placeholder générique ---
 class _PlaceholderPage extends StatelessWidget {
   final String title;
@@ -81,6 +85,21 @@ GoRouter buildRouter() {
           return MissionCreatePage(editMissionId: editId);
         },
       ),
+      GoRoute(
+        path: '/notifications',
+        name: 'notifications',
+        builder: (context, state) => const NotificationsPage(),
+      ),
+      GoRoute(
+        path: '/subscriptions/checkout',
+        name: 'subscriptions_checkout',
+        builder: (context, state) {
+          final args = state.extra as Map<String, dynamic>?;
+          final plan = args?['plan'] as String? ?? 'standard';
+          return VisibilitySubscriptionCheckoutPage(plan: plan);
+        },
+      ),
+
 
       GoRoute(
         path: '/payments',
@@ -95,17 +114,24 @@ GoRouter buildRouter() {
       // =========================================================
       // 🔹 SETTINGS (Gestion dynamique)
       // =========================================================
+      // =========================================================
+      // 🔹 SETTINGS (Gestion dynamique)
+      // =========================================================
       GoRoute(
-        path: '/settings/:type', // type = kyc, security, contact
+        path: '/settings/:type', // type = kyc, security, contact, banking
         builder: (context, state) {
           final type = state.pathParameters['type'];
 
-          // 1. Si l'URL est /settings/contact, on affiche ta nouvelle page
           if (type == 'contact') {
             return const CoordonneesPage();
           }
 
-          // 2. Pour les autres types (kyc, security...), on garde le placeholder
+          // 👇 AJOUT : La route pour le RIB
+          if (type == 'banking') {
+            return const BankingPage();
+          }
+
+          // Pour les autres types (kyc, security...), on garde le placeholder
           return Scaffold(
             appBar: AppBar(title: Text("Paramètres: $type")),
             body: Center(child: Text("Module $type en construction")),

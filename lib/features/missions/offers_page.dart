@@ -23,111 +23,8 @@ class _OffersPageState extends State<OffersPage> {
   static const Color kPrimary = Color(0xFF6C63FF);
   static const Color kBackground = Color(0xFFF6F3FF);
 
-  bool _isAccepting = false;
-
-  Future<void> _acceptOffer(
-      BuildContext context,
-      String offerId,
-      Map<String, dynamic> offer,
-      ) async {
-    if (_isAccepting) return;
-
-    final db = FirebaseFirestore.instance;
-    final missionRef = db.collection('missions').doc(widget.missionId);
-    final offersRef = missionRef.collection('offers');
-
-    setState(() => _isAccepting = true);
-
-    try {
-      final offerDoc = await offersRef.doc(offerId).get();
-      if (!offerDoc.exists) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Offre introuvable."),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-        setState(() => _isAccepting = false);
-        return;
-      }
-
-      final missionSnap = await missionRef.get();
-      if (!missionSnap.exists) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Mission introuvable."),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-        setState(() => _isAccepting = false);
-        return;
-      }
-
-      final mission = missionSnap.data()!;
-      final missionStatus = (mission['status'] ?? 'open').toString();
-      if (missionStatus != 'open') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              "Cette mission n'est plus ouverte (statut : $missionStatus).",
-            ),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        setState(() => _isAccepting = false);
-        return;
-      }
-
-      final double assignedPrice =
-      (offer['price'] ?? mission['budget'] ?? 0).toDouble();
-
-      final batch = db.batch();
-
-      // 👉 Mise à jour mission
-      batch.update(missionRef, {
-        'status': 'in_progress',
-        'assignedTo': offer['userId'],
-        'assignedPrice': assignedPrice,
-        'acceptedOfferId': offerId,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // 👉 Accepte UNE offre, rejette les autres (sauf cancelled)
-      final allOffersSnap = await offersRef.get();
-      for (final doc in allOffersSnap.docs) {
-        final data = doc.data();
-        final currentStatus = (data['status'] ?? 'pending').toString();
-        if (currentStatus == 'cancelled') continue;
-
-        batch.update(doc.reference, {
-          'status': doc.id == offerId ? 'accepted' : 'rejected',
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      await batch.commit();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Offre acceptée, mission en cours ✅"),
-          ),
-        );
-        Navigator.of(context).pop(true);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Erreur lors de l'acceptation : $e"),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isAccepting = false);
-    }
-  }
+  /// Pour ne pas réanimer 50 fois les mêmes cartes
+  final Set<String> _animatedOffers = {};
 
   @override
   Widget build(BuildContext context) {
@@ -135,12 +32,7 @@ class _OffersPageState extends State<OffersPage> {
         .collection('missions')
         .doc(widget.missionId)
         .collection('offers')
-        .where('status', whereIn: [
-      'pending',
-      'negotiating',
-      'accepted',
-      'countered',
-    ])
+    // 🔹 On prend TOUTES les offres, tous statuts confondus
         .orderBy('createdAt', descending: true);
 
     return Scaffold(
@@ -171,10 +63,39 @@ class _OffersPageState extends State<OffersPage> {
           if (docs.isEmpty) return _buildEmptyState();
 
           return ListView.separated(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
             padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
             itemCount: docs.length,
             separatorBuilder: (context, index) => const SizedBox(height: 14),
-            itemBuilder: (context, i) => _buildOfferCard(context, docs[i]),
+            itemBuilder: (context, i) {
+              final doc = docs[i];
+              final offerId = doc.id;
+
+              final shouldAnimate = !_animatedOffers.contains(offerId);
+              _animatedOffers.add(offerId);
+
+              // ✨ Animation ultra légère à la première apparition
+              return TweenAnimationBuilder<double>(
+                tween: Tween(
+                  begin: shouldAnimate ? 0.0 : 1.0,
+                  end: 1.0,
+                ),
+                duration: const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                builder: (context, value, child) {
+                  return Opacity(
+                    opacity: value,
+                    child: Transform.translate(
+                      offset: Offset(0, (1 - value) * 12),
+                      child: child,
+                    ),
+                  );
+                },
+                child: _buildOfferCard(context, doc),
+              );
+            },
           );
         },
       ),
@@ -209,7 +130,7 @@ class _OffersPageState extends State<OffersPage> {
   }
 
   // ---------------------------------------------------------------------------
-  //  CARTE D'OFFRE – FULL UI UPGRADE
+  //  CARTE D'OFFRE – ULTRA LÉGÈRE & FLUIDE
   // ---------------------------------------------------------------------------
   Widget _buildOfferCard(
       BuildContext context,
@@ -220,7 +141,6 @@ class _OffersPageState extends State<OffersPage> {
 
     final photo = (offer['userPhoto'] ?? '') as String;
     final name = (offer['userName'] ?? 'Utilisateur').toString();
-    final msg = (offer['message'] ?? '').toString();
     final price = (offer['price'] ?? 0).toDouble();
     final ts = offer['createdAt'] as Timestamp?;
     final status = (offer['status'] ?? 'pending').toString();
@@ -229,30 +149,23 @@ class _OffersPageState extends State<OffersPage> {
         ? DateFormat('d MMM à HH:mm', 'fr_FR').format(ts.toDate())
         : 'Date inconnue';
 
-    final isAccepted = status == 'accepted';
-    final isPending = status == 'pending' || status == 'negotiating';
-
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () {
+        // 👉 Le détail gère le message, le bouton "Accepter", etc.
         context.push('/missions/${widget.missionId}/offers/$offerId');
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.96),
+          color: Colors.white.withOpacity(0.97),
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(
-            color: isAccepted
-                ? const Color(0xFF4ADE80).withOpacity(0.4)
-                : Colors.white,
-            width: isAccepted ? 1.4 : 1.0,
-          ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 22,
-              offset: const Offset(0, 10),
+              color: Colors.black.withOpacity(0.03),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
             ),
           ],
         ),
@@ -283,66 +196,48 @@ class _OffersPageState extends State<OffersPage> {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Column(
+                    child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        // Nom
+                        Expanded(
+                          child: Text(
+                            name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15.5,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // Prix + statut
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
-                            Expanded(
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: kPrimary.withOpacity(0.06),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
                               child: Text(
-                                name,
+                                "${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)} €",
                                 style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 15.5,
+                                  color: kPrimary,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 14.5,
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: kPrimary.withOpacity(0.06),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    "${price.toStringAsFixed(price.truncateToDouble() == price ? 0 : 2)} €",
-                                    style: const TextStyle(
-                                      color: kPrimary,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 14.5,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                StatusBadge(
-                                  type: 'offer',
-                                  status: status,
-                                ),
-                              ],
+                            const SizedBox(height: 6),
+                            StatusBadge(
+                              type: 'offer',
+                              status: status,
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          msg.isNotEmpty ? msg : "Aucun message ajouté.",
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            height: 1.4,
-                            color: msg.isNotEmpty
-                                ? const Color(0xFF374151)
-                                : const Color(0xFF9CA3AF),
-                            fontStyle:
-                            msg.isNotEmpty ? FontStyle.normal : FontStyle.italic,
-                          ),
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -352,7 +247,7 @@ class _OffersPageState extends State<OffersPage> {
 
               const SizedBox(height: 10),
 
-              // --- FOOTER ---
+              // --- FOOTER : date + flèche seulement ---
               Row(
                 children: [
                   Icon(
@@ -369,56 +264,18 @@ class _OffersPageState extends State<OffersPage> {
                     ),
                   ),
                   const Spacer(),
-                  if (isPending)
-                    ElevatedButton(
-                      onPressed:
-                      _isAccepting ? null : () => _acceptOffer(context, offerId, offer),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kPrimary,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                      ),
-                      child: _isAccepting
-                          ? const SizedBox(
-                        height: 16,
-                        width: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                          : const Text(
-                        "Accepter",
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                        ),
-                      ),
-                    )
-                  else if (isAccepted)
-                    const Text(
-                      "Offre acceptée ✅",
-                      style: TextStyle(
-                        color: Color(0xFF16A34A),
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    )
-                  else
-                    Text(
-                      "Offre traitée",
-                      style: TextStyle(
-                        color: Colors.grey.shade500,
-                        fontSize: 13,
-                      ),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: kPrimary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(999),
                     ),
+                    padding: const EdgeInsets.all(6),
+                    child: const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 18,
+                      color: kPrimary,
+                    ),
+                  ),
                 ],
               ),
             ],

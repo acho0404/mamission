@@ -1955,6 +1955,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
     if (isOwner) {
       switch (status) {
         case 'open':
+        case 'open':
           return Column(
             children: [
               StreamBuilder<QuerySnapshot>(
@@ -1965,17 +1966,24 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
                     .snapshots(),
                 builder: (context, snap) {
                   final docs = snap.data?.docs ?? [];
-                  final activeCount = docs.where((d) {
-                    final data = d.data() as Map<String, dynamic>;
-                    final st = (data['status'] ?? 'pending').toString();
-                    return st != 'cancelled';
-                  }).length;
+
+                  // 🔹 Total d'offres reçues (inclut annulées)
+                  final totalCount = docs.length;
+
+                  // (optionnel) si un jour tu veux le nombre d'actives :
+                  // final activeCount = docs.where((d) {
+                  //   final data = d.data() as Map<String, dynamic>;
+                  //   final st = (data['status'] ?? 'pending').toString();
+                  //   return st != 'cancelled';
+                  // }).length;
+
                   return _buildSecondaryButton(
                     context,
                     onPressed: () => context
                         .push('/missions/${widget.missionId}/offers'),
                     icon: Icons.people_outline,
-                    label: "Voir les offres reçues ($activeCount)",
+                    // 🔹 On affiche le TOTAL, annulées incluses
+                    label: "Voir les offres reçues ($totalCount)",
                   );
                 },
               ),
@@ -1995,6 +2003,7 @@ class _MissionDetailPageState extends State<MissionDetailPage> {
               ),
             ],
           );
+
 
         case 'in_progress':
           return Column(

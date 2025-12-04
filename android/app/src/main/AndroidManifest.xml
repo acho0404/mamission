@@ -2,9 +2,10 @@
     package="com.mamission.app">
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
     <application
-        android:label="Mamission"
         android:name="${applicationName}"
+        android:label="MaMission"
         android:icon="@mipmap/ic_launcher">
 
         <activity

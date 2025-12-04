@@ -19,6 +19,7 @@ import 'package:mamission/shared/apple_appbar.dart';
 import 'package:mamission/features/explore/all_providers_page.dart';
 import 'package:mamission/core/secrets.dart';
 // --- FIN DES IMPORTS ---
+
 // --- BOITE FRANCE MÉTROPOLITAINE ---
 final LatLngBounds kFranceBounds = LatLngBounds(
   southwest: const LatLng(42.0, -4.5),
@@ -26,7 +27,8 @@ final LatLngBounds kFranceBounds = LatLngBounds(
 );
 
 // --- Helper loadMarkerIcon (Inchangé) ---
-Future<BitmapDescriptor> loadMarkerIcon(String path, {int targetWidth = 96}) async {
+Future<BitmapDescriptor> loadMarkerIcon(String path,
+    {int targetWidth = 96}) async {
   final byteData = await rootBundle.load(path);
   final codec = await ui.instantiateImageCodec(
     byteData.buffer.asUint8List(),
@@ -48,8 +50,28 @@ class ExplorePage extends StatefulWidget {
   State<ExplorePage> createState() => _ExplorePageState();
 }
 
-class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin {
-  // --- Toutes les variables (Inchangées / + ajoutées) ---
+class _ExplorePageState extends State<ExplorePage>
+    with TickerProviderStateMixin {
+  // --- PERSISTENCE EXPLORE (SharedPreferences) ---
+  static const _kPrefPriceMin = 'explore_price_min';
+  static const _kPrefPriceMax = 'explore_price_max';
+  static const _kPrefSort = 'explore_sort';
+  static const _kPrefWithPhoto = 'explore_with_photo';
+  static const _kPrefDate = 'explore_date';
+
+  static const _kPrefZoneEnabled = 'explore_zone_enabled';
+  static const _kPrefZoneMode = 'explore_zone_mode'; // 'current' | 'custom'
+  static const _kPrefZoneLat = 'explore_zone_lat';
+  static const _kPrefZoneLng = 'explore_zone_lng';
+  static const _kPrefZoneRadius = 'explore_zone_radius';
+  static const _kPrefZoneCityLabel = 'explore_zone_city_label';
+
+  static const _kPrefCategories = 'explore_categories';
+  static const _kPrefPanelLevel = 'explore_panel_level'; // 'low' | 'mid' | 'high'
+
+  // panel voulu au démarrage (par défaut BAS)
+  _PanelLevel _initialPanelLevel = _PanelLevel.low;
+
   bool _mapReady = false;
   final Completer<GoogleMapController> _controller = Completer();
   CameraPosition? _lastCamera;
@@ -92,8 +114,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   final ValueNotifier<int> _selectedCardIndex = ValueNotifier(0);
   late final PageController _cardCarouselController;
   late final ScrollController _filterScrollController;
-  final ValueNotifier<bool> _showFilterScrollHint = ValueNotifier<bool>(true);
-
+  final ValueNotifier<bool> _showFilterScrollHint =
+  ValueNotifier<bool>(true);
 
   final ValueNotifier<Set<Marker>> _markers = ValueNotifier(<Marker>{});
   LatLng? _me;
@@ -124,8 +146,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
 
   late final GooglePlace _places;
 
-  final ValueNotifier<List<QueryDocumentSnapshot<Map<String, dynamic>>>> _missions =
-  ValueNotifier([]);
+  final ValueNotifier<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  _missions = ValueNotifier([]);
 
   static const String kPlacesApiKey = Secrets.googleMapApiKey;
 
@@ -243,6 +265,23 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     _dateFilter = 'all';
   }
 
+  RangeValues _normalizePriceRange(RangeValues range) {
+    const double min = 0;
+    const double max = 1000;
+
+    double start = range.start;
+    double end = range.end;
+
+    if (start < min) start = min;
+    if (end > max) end = max;
+
+    if (end < start) {
+      end = start;
+    }
+
+    return RangeValues(start, end);
+  }
+
   // --- initState ---
   @override
   void initState() {
@@ -256,18 +295,166 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     _cardCarouselController = PageController(viewportFraction: 0.85);
     _cardCarouselController.addListener(_onCardCarouselScrolled);
 
+    _scrollableController.addListener(_handleSheetChanged);
+
     _initIcons();
     _restoreLastCameraPosition();
-    _loadMissions();
 
-    _scrollableController.addListener(_handleSheetChanged);
+    // 🔁 restaure filtres + état panneau puis charge missions
+    _initExploreStateAsync();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _measureSearchOverlay();
-      _onFilterScroll(); // initialise l’état du hint
+      _onFilterScroll();
     });
   }
 
+  Future<void> _initExploreStateAsync() async {
+    // 1) On restaure tous les filtres depuis SharedPreferences
+    await _restoreExploreState();
+
+    // 2) Si le filtre zone = "Autour de moi" est actif,
+    // on REDEMANDE la position pour que le filtre soit VRAIMENT appliqué
+    if (_zoneFilterEnabled &&
+        _zoneFilterMode == ZoneFilterMode.currentPosition &&
+        _me == null) {
+      final myLoc = await _getUserLocation();
+      if (myLoc == null) {
+        // Impossible d'appliquer "Autour de moi" -> on désactive
+        // pour éviter d'afficher un filtre actif mais pas réel
+        _zoneFilterEnabled = false;
+      }
+    }
+
+    if (!mounted) return;
+
+    // 3) On met à jour l'UI avec les valeurs restaurées
+    setState(() {});
+
+    // 4) On recharge les missions AVEC les filtres restaurés
+    _loadMissions();
+
+    // 5) Après le premier build, on force la feuille en BAS
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollableController.isAttached) return;
+
+      final double targetSize = _lowSnap; // démarrage bas
+      _scrollableController.jumpTo(targetSize);
+      _panelPosition.value = targetSize;
+    });
+  }
+
+
+  // ---------------------------------------------------------------
+  // PERSISTENCE EXPLORE : restore / save dans SharedPreferences
+  // ---------------------------------------------------------------
+  Future<void> _restoreExploreState() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Budget
+    final min = prefs.getDouble(_kPrefPriceMin);
+    final max = prefs.getDouble(_kPrefPriceMax);
+    if (min != null && max != null) {
+      _priceRange = _normalizePriceRange(RangeValues(min, max));
+    }
+
+    // Tri
+    _sortOrder = prefs.getString(_kPrefSort) ?? 'pertinence';
+
+    // Photo + date
+    _withPhotoFilter = prefs.getBool(_kPrefWithPhoto) ?? false;
+    _dateFilter = prefs.getString(_kPrefDate) ?? 'all';
+
+    // Zone
+    _zoneFilterEnabled = prefs.getBool(_kPrefZoneEnabled) ?? false;
+    final mode = prefs.getString(_kPrefZoneMode);
+    if (mode == 'custom') {
+      _zoneFilterMode = ZoneFilterMode.customLocation;
+    } else {
+      _zoneFilterMode = ZoneFilterMode.currentPosition;
+    }
+
+    final zLat = prefs.getDouble(_kPrefZoneLat);
+    final zLng = prefs.getDouble(_kPrefZoneLng);
+    if (zLat != null && zLng != null) {
+      _zoneFilterCenter = LatLng(zLat, zLng);
+    }
+
+    _distanceKm = prefs.getDouble(_kPrefZoneRadius) ?? 50;
+    _zoneCityLabel = prefs.getString(_kPrefZoneCityLabel);
+
+    // Catégories
+    final cats = prefs.getStringList(_kPrefCategories);
+    if (cats != null) {
+      _categoryFilters = cats.toSet();
+    }
+
+    // Niveau de panneau : on le lit mais on force de toute façon à "low" au démarrage
+    final panelStr = prefs.getString(_kPrefPanelLevel);
+    switch (panelStr) {
+      case 'low':
+        _initialPanelLevel = _PanelLevel.low;
+        break;
+      case 'mid':
+        _initialPanelLevel = _PanelLevel.mid;
+        break;
+      case 'high':
+        _initialPanelLevel = _PanelLevel.high;
+        break;
+      default:
+        _initialPanelLevel = _PanelLevel.low;
+    }
+  }
+
+  Future<void> _saveExploreState() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Budget
+    await prefs.setDouble(_kPrefPriceMin, _priceRange.start);
+    await prefs.setDouble(_kPrefPriceMax, _priceRange.end);
+
+    // Tri
+    await prefs.setString(_kPrefSort, _sortOrder);
+
+    // Photo + date
+    await prefs.setBool(_kPrefWithPhoto, _withPhotoFilter);
+    await prefs.setString(_kPrefDate, _dateFilter);
+
+    // Zone
+    await prefs.setBool(_kPrefZoneEnabled, _zoneFilterEnabled);
+    await prefs.setString(
+      _kPrefZoneMode,
+      _zoneFilterMode == ZoneFilterMode.customLocation ? 'custom' : 'current',
+    );
+    if (_zoneFilterCenter != null) {
+      await prefs.setDouble(_kPrefZoneLat, _zoneFilterCenter!.latitude);
+      await prefs.setDouble(_kPrefZoneLng, _zoneFilterCenter!.longitude);
+    } else {
+      await prefs.remove(_kPrefZoneLat);
+      await prefs.remove(_kPrefZoneLng);
+    }
+    await prefs.setDouble(_kPrefZoneRadius, _distanceKm);
+    if (_zoneCityLabel != null) {
+      await prefs.setString(_kPrefZoneCityLabel, _zoneCityLabel!);
+    } else {
+      await prefs.remove(_kPrefZoneCityLabel);
+    }
+
+    // Niveau de panneau actuel
+    String panelStr;
+    switch (_currentPanelLevel) {
+      case _PanelLevel.low:
+        panelStr = 'low';
+        break;
+      case _PanelLevel.high:
+        panelStr = 'high';
+        break;
+      case _PanelLevel.mid:
+      default:
+        panelStr = 'mid';
+    }
+    await prefs.setString(_kPrefPanelLevel, panelStr);
+  }
 
   // --- _measureSearchOverlay (Inchangé) ---
   void _measureSearchOverlay() {
@@ -302,7 +489,6 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
 
     super.dispose();
   }
-
 
   // --- LOGIQUE ---
   Future<void> _initIcons() async {
@@ -340,7 +526,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     final p = await SharedPreferences.getInstance();
     final lat = p.getDouble('cam_lat');
     final lng = p.getDouble('cam_lng');
-    final zoom = p.getDouble('cam_zoom') ?? 12.0;
+    final zoom = p.getDouble('cam_zoom') ?? _kFranceCamMid.zoom;
     if (lat != null && lng != null) {
       _lastCamera = CameraPosition(target: LatLng(lat, lng), zoom: zoom);
     } else {
@@ -417,7 +603,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                       d.month == now.month &&
                       d.day == now.day;
                 case 'next7':
-                  final start = DateTime(now.year, now.month, now.day);
+                  final start =
+                  DateTime(now.year, now.month, now.day);
                   final end = start.add(const Duration(days: 7));
                   return !d.isBefore(start) && d.isBefore(end);
                 case 'weekend':
@@ -470,6 +657,9 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
           _missions.value = docs;
           _rebuildMarkers();
           _loadingMissions.value = false;
+
+          // 💾 on mémorise l’état complet (filtres + zone + panel)
+          _saveExploreState();
         },
         onError: (e) {
           _error.value = 'Erreur chargement missions : $e';
@@ -483,7 +673,9 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   }
 
   double _docDistanceKm(
-      QueryDocumentSnapshot<Map<String, dynamic>> doc, LatLng me) {
+      QueryDocumentSnapshot<Map<String, dynamic>> doc,
+      LatLng me,
+      ) {
     final m = doc.data();
     final pos = (m['position'] as Map<String, dynamic>?) ?? {};
     final lat = (pos['lat'] as num?)?.toDouble();
@@ -505,22 +697,23 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
       if (currentSize > _lowSnap + 0.05) {
         await _scrollableController.animateTo(
           _lowSnap,
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
+          duration: const Duration(milliseconds: 230),
+          curve: Curves.easeOutCubic,
         );
-        await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 40));
       }
     }
     final allMissions = _missions.value;
-    final index = allMissions.indexWhere((doc) => doc.id == missionDoc.id);
+    final index =
+    allMissions.indexWhere((doc) => doc.id == missionDoc.id);
     if (index == -1) return;
     _selectedMissions.value = allMissions;
     _selectedCardIndex.value = index;
     if (_cardCarouselController.hasClients) {
       _cardCarouselController.animateToPage(
         index,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
       );
     }
     _rebuildMarkers();
@@ -682,8 +875,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
 
     _scrollableController.animateTo(
       _lowSnap,
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOut,
+      duration: const Duration(milliseconds: 230),
+      curve: Curves.easeOutCubic,
     );
   }
 
@@ -714,6 +907,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     if (newLevel == null || newLevel == _currentPanelLevel) return;
 
     _currentPanelLevel = newLevel;
+    // 💾 on mémorise le niveau du panneau
+    _saveExploreState();
 
     await _animateCameraForPanelLevel(newLevel);
   }
@@ -726,7 +921,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
       if (base == null) return;
 
       if (level == _PanelLevel.low) {
-        await ctl.animateCamera(CameraUpdate.newCameraPosition(base));
+        await ctl.animateCamera(
+            CameraUpdate.newCameraPosition(base));
         await _saveCamera(base);
         return;
       }
@@ -760,6 +956,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: false,
+      extendBodyBehindAppBar: true,
+      backgroundColor: Colors.transparent,
       appBar: buildAppleMissionAppBar(
         title: "Explorer",
       ),
@@ -775,29 +973,42 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   }
 
   // --- _buildSplitLayout ---
-  // --- _buildSplitLayout (NOUVELLE VERSION) ---
   Widget _buildSplitLayout() {
     final appBar = buildAppleMissionAppBar(
       title: "Explorer",
     );
+
     final screenHeight = MediaQuery.of(context).size.height;
     final appBarHeight = appBar.preferredSize.height;
     final statusBarHeight = MediaQuery.of(context).padding.top;
+
+    // Hauteur disponible sous l’appbar
     final availableHeight = screenHeight - appBarHeight - statusBarHeight;
+
+    // Hauteur totale utilisée par la DraggableScrollableSheet (le body)
+    final bodyHeight = screenHeight;
 
     return ValueListenableBuilder<double>(
       valueListenable: _searchOverlayHeight,
       builder: (context, overlayHeight, child) {
-        // 👉 Feuille qui peut monter jusqu’à coller l’appbar
-        _lowSnap = 140 / availableHeight; // ~110px
+        // snap bas toujours ~140px
+        _lowSnap = 140 / availableHeight;
         _midSnap = 0.55;
-        _highSnap = 1.0; // plein écran sous l’appbar
+
+        // 🔥 maxChildSize = hauteur dispo sous l’appbar
+        _highSnap = availableHeight / bodyHeight;
 
         return Stack(
           children: [
-            _buildMap(availableHeight),
+            // On donne la hauteur "référence" = bodyHeight (écran)
+            _buildMap(bodyHeight),
             _buildDraggableList(_lowSnap, _midSnap, _highSnap),
-            _buildDynamicMapControls(_lowSnap, _midSnap, _highSnap, availableHeight),
+            _buildDynamicMapControls(
+              _lowSnap,
+              _midSnap,
+              _highSnap,
+              bodyHeight,
+            ),
           ],
         );
       },
@@ -805,14 +1016,12 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   }
 
 
+
   // --- _buildDraggableList (avec glass + anims) ---
   Widget _buildDraggableList(
       double lowSnap, double midSnap, double highSnap) {
     return DraggableScrollableSheet(
       controller: _scrollableController,
-      // ⛔ aujourd’hui :
-      // initialChildSize: midSnap,
-      // ✅ je te propose :
       initialChildSize: lowSnap,
       minChildSize: lowSnap,
       maxChildSize: highSnap,
@@ -828,7 +1037,6 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
             final double handleOpacity = isFullScreen ? 0.0 : 1.0;
             final double blurSigma = isFullScreen ? 14.0 : 6.0;
 
-            // Petit effet de translation selon le niveau
             final double translateY =
             isFullScreen ? 0.0 : 6.0 * (1 - position);
 
@@ -843,9 +1051,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                   filter: ui.ImageFilter.blur(
                       sigmaX: blurSigma, sigmaY: blurSigma),
                   child: AnimatedContainer(
-                    duration:
-                    const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
@@ -858,8 +1065,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                       ),
                       border: Border(
                         top: BorderSide(
-                          color:
-                          Colors.white.withOpacity(0.7),
+                          color: Colors.white.withOpacity(0.7),
                           width: 1.5,
                         ),
                       ),
@@ -876,19 +1082,30 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                     child: CustomScrollView(
                       controller: scrollController,
                       physics: const BouncingScrollPhysics(
-                          parent:
-                          AlwaysScrollableScrollPhysics()),
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
                       slivers: [
                         SliverToBoxAdapter(
                           child: Column(
                             children: [
                               AnimatedOpacity(
                                 duration: const Duration(
-                                    milliseconds: 200),
+                                    milliseconds: 160),
                                 opacity: handleOpacity,
                                 child: _buildHandle(),
                               ),
-                              _buildListTitle(),
+                              ValueListenableBuilder<
+                                  List<
+                                      QueryDocumentSnapshot<
+                                          Map<String, dynamic>>>>(
+                                valueListenable: _missions,
+                                builder: (_, list, __) {
+                                  return _buildListTitle(
+                                    missionsCount: list.length,
+                                    isFullScreen: isFullScreen,
+                                  );
+                                },
+                              ),
                             ],
                           ),
                         ),
@@ -939,8 +1156,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
           padding:
           EdgeInsets.symmetric(vertical: 40.0, horizontal: 16.0),
           child: Center(
-              child:
-              Text('Aucune mission trouvée pour ces filtres.')),
+            child: Text('Aucune mission trouvée pour ces filtres.'),
+          ),
         ),
       );
     }
@@ -953,8 +1170,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
 
           return TweenAnimationBuilder<double>(
             tween: Tween(begin: 0.96, end: 1.0),
-            duration: const Duration(milliseconds: 260),
-            curve: Curves.easeOut,
+            duration: const Duration(milliseconds: 210),
+            curve: Curves.easeOutCubic,
             builder: (context, scale, child) {
               return Transform.scale(
                 scale: scale,
@@ -962,8 +1179,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
               );
             },
             child: Padding(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 4),
               child: _buildMissionCard(doc.id, m),
             ),
           );
@@ -974,11 +1191,12 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   }
 
   // --- _buildMap ---
-  Widget _buildMap(double availableHeight) {
+  Widget _buildMap(double bodyHeight) {
     return ValueListenableBuilder<double>(
       valueListenable: _panelPosition,
       builder: (context, position, child) {
-        final double bottomPadding = availableHeight * position;
+        // Hauteur de la feuille en pixels = fraction * bodyHeight
+        final double bottomPadding = bodyHeight * position;
 
         return ValueListenableBuilder<Set<Marker>>(
           valueListenable: _markers,
@@ -997,10 +1215,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                 }
               },
               onTap: _onMapTapped,
-              cameraTargetBounds:
-              CameraTargetBounds(kFranceBounds),
-              minMaxZoomPreference:
-              const MinMaxZoomPreference(5.3, 18),
+              cameraTargetBounds: CameraTargetBounds(kFranceBounds),
+              minMaxZoomPreference: const MinMaxZoomPreference(5.3, 18),
               myLocationEnabled: true,
               myLocationButtonEnabled: false,
               zoomControlsEnabled: false,
@@ -1013,9 +1229,10 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     );
   }
 
+
   // --- _buildDynamicMapControls ---
-  Widget _buildDynamicMapControls(double lowSnap, double midSnap,
-      double highSnap, double availableHeight) {
+  Widget _buildDynamicMapControls(
+      double lowSnap, double midSnap, double highSnap, double bodyHeight) {
     return AnimatedBuilder(
       animation: _scrollableController,
       builder: (context, child) {
@@ -1024,10 +1241,11 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
           panelFraction = _scrollableController.size;
         }
 
-        final bottomPosition =
-            (panelFraction * availableHeight) + 30;
-        final opacity =
-        (panelFraction > (highSnap * 0.8)) ? 0.0 : 1.0;
+        // Les boutons suivent le haut de la feuille
+        final bottomPosition = (panelFraction * bodyHeight) + 30;
+
+        // Quand la feuille est presque en haut, on cache les boutons
+        final opacity = (panelFraction > (highSnap * 0.8)) ? 0.0 : 1.0;
 
         return Positioned(
           right: 16,
@@ -1048,6 +1266,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
       ),
     );
   }
+
 
   // --- Bouton "Afficher la carte" ---
   Widget _buildShowMapButton() {
@@ -1071,8 +1290,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
               onPressed: () {
                 _scrollableController.animateTo(
                   _lowSnap,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOut,
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
                 );
               },
               backgroundColor: const Color(0xFF222222),
@@ -1103,8 +1322,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
         final bool isVisible = missions.isNotEmpty;
 
         return AnimatedPositioned(
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
           bottom:
           isVisible ? (10.0 + safeBottom) : -(maxHeight + 50.0),
           left: 0,
@@ -1133,12 +1352,13 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                       return AnimatedScale(
                         scale: isFocused ? 1.0 : 0.94,
                         duration: const Duration(
-                            milliseconds: 220),
-                        curve: Curves.easeOut,
+                            milliseconds: 200),
+                        curve: Curves.easeOutCubic,
                         child: AnimatedOpacity(
                           duration: const Duration(
-                              milliseconds: 220),
-                          opacity: isFocused ? 1.0 : 0.75,
+                              milliseconds: 200),
+                          opacity:
+                          isFocused ? 1.0 : 0.75,
                           child: Padding(
                             padding: const EdgeInsets
                                 .symmetric(
@@ -1161,12 +1381,12 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   }
 
   // --- _fab (Inchangé + petit effet tap) ---
-  Widget _fab(
-      {IconData? icon,
-        Widget? iconWidget,
-        required VoidCallback onTap}) {
+  Widget _fab({
+    IconData? icon,
+    Widget? iconWidget,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
-      onTapDown: (_) {},
       onTapUp: (_) => onTap(),
       child: TweenAnimationBuilder<double>(
         tween: Tween(begin: 1.0, end: 1.0),
@@ -1186,9 +1406,11 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: iconWidget ??
-                      Icon(icon,
-                          size: 22,
-                          color: MaMissionColors.textDark),
+                      Icon(
+                        icon,
+                        size: 22,
+                        color: MaMissionColors.textDark,
+                      ),
                 ),
               ),
             ),
@@ -1200,17 +1422,30 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
 
   // --- _buildHandle ---
   Widget _buildHandle() {
-    return Center(
-      child: Container(
-        width: 42,
-        height: 5.5,
-        margin: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.22),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.55),
-            width: 1,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragEnd: (_) {
+        // Quand on tire la poignée vers le bas, on redescend direct en bas
+        if (_scrollableController.isAttached) {
+          _scrollableController.animateTo(
+            _lowSnap,
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+          );
+        }
+      },
+      child: Center(
+        child: Container(
+          width: 42,
+          height: 5.5,
+          margin: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.22),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.55),
+              width: 1,
+            ),
           ),
         ),
       ),
@@ -1218,35 +1453,71 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   }
 
   // --- _buildListTitle ---
-  Widget _buildListTitle() {
+  Widget _buildListTitle({
+    required int missionsCount,
+    required bool isFullScreen,
+  }) {
+    String title;
+    if (missionsCount == 0) {
+      title = "Aucune mission";
+    } else if (missionsCount == 1) {
+      title = "1 mission trouvée";
+    } else {
+      title = "$missionsCount missions trouvées";
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Text(
-            'Missions à proximité',
-            style: TextStyle(
+          Text(
+            title,
+            style: const TextStyle(
               fontWeight: FontWeight.w800,
               fontSize: 18,
               color: Color(0xFF1C1C1E),
             ),
           ),
-          TextButton.icon(
-            icon: Icon(Icons.sort_rounded,
-                size: 20, color: MaMissionColors.textDark),
-            label: Text(
-              "Trier",
-              style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: MaMissionColors.textDark),
+          if (isFullScreen)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton.icon(
+                  icon: Icon(
+                    Icons.sort_rounded,
+                    size: 18,
+                    color: MaMissionColors.textDark,
+                  ),
+                  label: const Text(
+                    "Trier",
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  style: TextButton.styleFrom(
+                    padding:
+                    const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                  onPressed: _showSortModal,
+                ),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  icon: const Icon(
+                    Icons.tune_rounded,
+                    size: 18,
+                    color: Color(0xFF1C1C1E),
+                  ),
+                  label: const Text(
+                    "Filtres",
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  style: TextButton.styleFrom(
+                    padding:
+                    const EdgeInsets.symmetric(horizontal: 10),
+                  ),
+                  onPressed: _showAllFiltersModal,
+                ),
+              ],
             ),
-            style: TextButton.styleFrom(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 10),
-            ),
-            onPressed: _showSortModal,
-          ),
         ],
       ),
     );
@@ -1259,6 +1530,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
       onTap: () => context.push('/missions/$id'),
     );
   }
+
   void _onFilterScroll() {
     if (!_filterScrollController.hasClients) return;
 
@@ -1287,36 +1559,30 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
         return AnimatedOpacity(
           duration: const Duration(milliseconds: 220),
           opacity: show ? 1.0 : 0.0,
-          // Utilisez IgnorePointer si vous voulez que l'utilisateur puisse cliquer
-          // sur le filtre en dessous, sinon retirez-le si la flèche est un bouton.
           child: IgnorePointer(
             child: Container(
-              width: 60, // J'ai légèrement élargi pour un dégradé plus doux
+              width: 60,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  // On part du côté intérieur (gauche) vers le bord (droite)
                   begin: Alignment.centerLeft,
                   end: Alignment.centerRight,
-
-                  // C'est ici que la magie opère pour la douceur
                   stops: const [0.0, 0.5, 1.0],
-
                   colors: [
-                    Colors.white.withOpacity(0.0), // 0% : Transparent (côté texte)
-                    Colors.white.withOpacity(0.9), // 50% : Presque blanc
-                    Colors.white,                  // 100% : Blanc pur (sous la flèche)
+                    Colors.white.withOpacity(0.0),
+                    Colors.white.withOpacity(0.9),
+                    Colors.white,
                   ],
                 ),
               ),
               child: Align(
                 alignment: Alignment.centerRight,
                 child: Padding(
-                  padding: const EdgeInsets.only(right: 8.0), // Un peu plus d'espace
+                  padding:
+                  const EdgeInsets.only(right: 8.0),
                   child: Icon(
                     Icons.arrow_forward_ios_rounded,
-                    size: 16, // Légèrement plus grand pour la visibilité
+                    size: 16,
                     color: const Color(0xFF6C63FF),
-                    // Optionnel : ajouter une petite ombre à l'icône pour le contraste
                     shadows: [
                       Shadow(
                         blurRadius: 2,
@@ -1333,7 +1599,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     );
   }
 
-
+  // --- Barre de recherche + Filtres (overlay animé léger) ---
   // --- Barre de recherche + Filtres (overlay animé léger) ---
   Widget _buildSearchAndFilterOverlay() {
     return Positioned(
@@ -1345,24 +1611,28 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
         child: ValueListenableBuilder<double>(
           valueListenable: _panelPosition,
           builder: (context, pos, child) {
-            final double opacity =
-            (pos > _highSnap * 0.95) ? 0.0 : 1.0;
-            return AnimatedOpacity(
-              duration:
-              const Duration(milliseconds: 180),
-              opacity: opacity,
-              child: Container(
-                key: _searchOverlayKey,
-                padding:
-                const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                color: Colors.transparent,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildExploreToggle(),    // 👈 nouveau
-                    _buildFilterBar(),        // 👈 ton code existant
-                  ],
+            // Quand le panneau est quasiment en haut : on masque l’overlay
+            final bool hidden = (pos > _highSnap * 0.95);
+            final double opacity = hidden ? 0.0 : 1.0;
+
+            return IgnorePointer(
+              // 🔥 Pendant que l’overlay est invisible, il NE reçoit PLUS les taps
+              ignoring: hidden,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 180),
+                opacity: opacity,
+                child: Container(
+                  key: _searchOverlayKey,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                  color: Colors.transparent,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildExploreToggle(),
+                      _buildFilterBar(),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -1371,14 +1641,14 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
       ),
     );
   }
-  // --- Switch Missions / Prestataires en haut ---
+
+
   // --- Switch Missions / Prestataires en haut ---
   Widget _buildExploreToggle() {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        // fond clair légèrement dégradé comme sur ton screen
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -1404,23 +1674,20 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
         children: [
           _buildTogglePill(
             label: 'Missions',
-            selected: true, // on est sur Explorer > Missions
-            onTap: () {
-              // déjà sur cet écran
-            },
+            selected: true,
+            onTap: () {},
           ),
           _buildTogglePill(
             label: 'Prestataires',
             selected: false,
             onTap: () {
-              context.push('/providers'); // page prestataires
+              context.push('/providers');
             },
           ),
         ],
       ),
     );
   }
-
 
   Widget _buildTogglePill({
     required String label,
@@ -1432,11 +1699,10 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
+          curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
-            // 👉 quand sélectionné : gros pill violet en dégradé
             gradient: selected
                 ? const LinearGradient(
               begin: Alignment.topLeft,
@@ -1467,7 +1733,6 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
   }
 
   // --- Filtres en ligne ---
-  // --- Filtres en ligne ---
   Widget _buildFilterBar() {
     return Row(
       children: [
@@ -1495,15 +1760,24 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                     Container(
                       width: 1,
                       height: 24,
-                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                      margin:
+                      const EdgeInsets.symmetric(horizontal: 8),
                       color: Colors.grey.shade300,
                     ),
-                    _buildCategoryDirectChip("Bricolage", Icons.handyman_rounded),
-                    _buildCategoryDirectChip("Jardinage", Icons.park_rounded),
-                    _buildCategoryDirectChip("Déménagement", Icons.local_shipping_rounded),
-                    _buildCategoryDirectChip("Ménage", Icons.cleaning_services_rounded),
-                    _buildCategoryDirectChip("Informatique", Icons.computer_rounded),
-                    _buildCategoryDirectChip("Animaux", Icons.pets_rounded),
+                    _buildCategoryDirectChip(
+                        "Bricolage", Icons.handyman_rounded),
+                    _buildCategoryDirectChip(
+                        "Jardinage", Icons.park_rounded),
+                    _buildCategoryDirectChip(
+                        "Déménagement",
+                        Icons.local_shipping_rounded),
+                    _buildCategoryDirectChip(
+                        "Ménage",
+                        Icons.cleaning_services_rounded),
+                    _buildCategoryDirectChip(
+                        "Informatique", Icons.computer_rounded),
+                    _buildCategoryDirectChip(
+                        "Animaux", Icons.pets_rounded),
                     const SizedBox(width: 12),
                   ],
                 ),
@@ -1513,7 +1787,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                 top: 0,
                 bottom: 0,
                 child: IgnorePointer(
-                  ignoring: true, // ne bloque pas les taps dessous
+                  ignoring: true,
                   child: _buildFilterScrollHint(),
                 ),
               ),
@@ -1574,7 +1848,6 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     );
   }
 
-
   // --- Puce catégorie directe ---
   Widget _buildCategoryDirectChip(String label, IconData icon) {
     final bool isSelected = _categoryFilters.contains(label);
@@ -1592,7 +1865,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
         _loadMissions();
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: const Duration(milliseconds: 180),
         margin: const EdgeInsets.only(right: 8),
         padding: const EdgeInsets.symmetric(
             horizontal: 14, vertical: 10),
@@ -1643,7 +1916,11 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
 
   // --- Puces Zone / Budget ---
   Widget _buildFilterChip(
-      String id, String label, IconData icon, VoidCallback onTap) {
+      String id,
+      String label,
+      IconData icon,
+      VoidCallback onTap,
+      ) {
     bool isSelected = false;
     if (id == 'budget' && _hasActiveBudgetFilter) {
       isSelected = true;
@@ -1657,7 +1934,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: const Duration(milliseconds: 180),
         padding: const EdgeInsets.symmetric(
             horizontal: 14, vertical: 10),
         margin: const EdgeInsets.only(right: 8),
@@ -1718,8 +1995,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
             children: [
               _sortTile("Recommandé", "pertinence"),
               _sortTile("Plus récents", "recent"),
-              _sortTile("Urgent", "urgent"),
-              _sortTile("Le plus proche", "distance"),
+              _sortTile("Urgent (date limite proche)", "urgent"),
+              _sortTile("Le plus proche de moi", "distance"),
               _sortTile("Prix le plus bas", "prix_asc"),
               _sortTile("Prix le plus élevé", "prix_desc"),
             ],
@@ -1733,7 +2010,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     final bool selected = _sortOrder == value;
     return ListTile(
       leading: Icon(
-        selected ? Icons.star : Icons.circle_outlined,
+        selected ? Icons.radio_button_checked : Icons.radio_button_off,
         color: selected
             ? const Color(0xFF6C63FF)
             : Colors.grey.shade600,
@@ -1749,11 +2026,14 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
 
   // --- Modale BUDGET ---
   void _showBudgetModal() {
-    RangeValues currentRange = _priceRange;
+    RangeValues currentRange = _normalizePriceRange(_priceRange);
+
     final minCtrl = TextEditingController(
-        text: currentRange.start.toInt().toString());
+      text: currentRange.start.toInt().toString(),
+    );
     final maxCtrl = TextEditingController(
-        text: currentRange.end.toInt().toString());
+      text: currentRange.end.toInt().toString(),
+    );
 
     showModalBottomSheet(
       context: context,
@@ -1765,18 +2045,20 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
             void updateRangeFromText() {
               final min = double.tryParse(minCtrl.text) ?? 0;
               final max = double.tryParse(maxCtrl.text) ?? 1000;
-              if (min < max && min >= 0 && max <= 1000) {
-                setS(() {
-                  currentRange = RangeValues(min, max);
-                });
-              }
+
+              double start = min.clamp(0, 1000);
+              double end = max.clamp(0, 1000);
+              if (end < start) end = start;
+
+              setS(() {
+                currentRange = RangeValues(start, end);
+              });
             }
 
             return Padding(
               padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context)
-                      .viewInsets
-                      .bottom),
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
               child: _BottomModalContainer(
                 title: "Budget",
                 child: Column(
@@ -1786,7 +2068,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                         Expanded(
                           child: TextField(
                             controller: minCtrl,
-                            keyboardType: TextInputType.number,
+                            keyboardType:
+                            TextInputType.number,
                             inputFormatters: [
                               FilteringTextInputFormatter
                                   .digitsOnly
@@ -1804,7 +2087,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                         Expanded(
                           child: TextField(
                             controller: maxCtrl,
-                            keyboardType: TextInputType.number,
+                            keyboardType:
+                            TextInputType.number,
                             inputFormatters: [
                               FilteringTextInputFormatter
                                   .digitsOnly
@@ -1831,12 +2115,18 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                         "${currentRange.end.toInt()} €",
                       ),
                       onChanged: (values) {
+                        final normalized =
+                        _normalizePriceRange(values);
                         setS(() {
-                          currentRange = values;
+                          currentRange = normalized;
                           minCtrl.text =
-                              values.start.toInt().toString();
+                              normalized.start
+                                  .toInt()
+                                  .toString();
                           maxCtrl.text =
-                              values.end.toInt().toString();
+                              normalized.end
+                                  .toInt()
+                                  .toString();
                         });
                       },
                     ),
@@ -1852,15 +2142,17 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                               maxCtrl.text = "1000";
                             });
                           },
-                          child:
-                          const Text("Réinitialiser"),
+                          child: const Text("Réinitialiser"),
                         ),
                         const Spacer(),
                         ElevatedButton(
                           onPressed: () {
                             Navigator.pop(context);
-                            setState(() =>
-                            _priceRange = currentRange);
+                            setState(() {
+                              _priceRange =
+                                  _normalizePriceRange(
+                                      currentRange);
+                            });
                             _loadMissions();
                           },
                           style: ElevatedButton.styleFrom(
@@ -1903,7 +2195,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
               decoration: const BoxDecoration(
                 color: Colors.white,
                 borderRadius:
-                BorderRadius.vertical(top: Radius.circular(32)),
+                BorderRadius.vertical(
+                    top: Radius.circular(32)),
               ),
               child: Column(
                 children: [
@@ -1930,8 +2223,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                   const SizedBox(height: 24),
                   Expanded(
                     child: ListView.separated(
-                      padding:
-                      const EdgeInsets.symmetric(
+                      padding: const EdgeInsets.symmetric(
                           horizontal: 24, vertical: 10),
                       itemCount: _categoriesList.length,
                       separatorBuilder: (c, i) =>
@@ -1977,14 +2269,13 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                               BorderRadius.circular(20),
                               border: isSelected
                                   ? Border.all(
-                                color:
-                                const Color(
+                                color: const Color(
                                     0xFF6C63FF),
                                 width: 2,
                               )
                                   : Border.all(
-                                color:
-                                Colors.transparent,
+                                color: Colors
+                                    .transparent,
                               ),
                             ),
                             child: Row(
@@ -1996,8 +2287,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                                   BoxDecoration(
                                     color: colorBg,
                                     borderRadius:
-                                    BorderRadius.circular(
-                                        14),
+                                    BorderRadius
+                                        .circular(14),
                                   ),
                                   child: Icon(
                                     icon,
@@ -2029,8 +2320,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                                 else
                                   Icon(
                                     Icons.circle_outlined,
-                                    color:
-                                    Colors.grey.shade300,
+                                    color: Colors
+                                        .grey.shade300,
                                     size: 24,
                                   ),
                               ],
@@ -2059,7 +2350,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                          fontWeight:
+                          FontWeight.bold,
                         ),
                       ),
                     ),
@@ -2073,7 +2365,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     );
   }
 
-  // --- Modale ZONE (refaite avec _zoneFilterEnabled) ---
+  // --- Modale ZONE ---
   void _showZoneModal() {
     double localKm = _distanceKm;
     ZoneFilterMode localMode = _zoneFilterMode;
@@ -2090,14 +2382,16 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
       builder: (_) {
         return StatefulBuilder(
           builder: (context, setS) {
-            Future<void> _searchModalCity(String query) async {
+            Future<void> _searchModalCity(
+                String query) async {
               if (query.isEmpty) {
                 setS(() => modalSuggestions = []);
                 return;
               }
               setS(() => modalLoading = true);
               try {
-                final res = await _places.autocomplete.get(
+                final res =
+                await _places.autocomplete.get(
                   query,
                   language: 'fr',
                   components: [
@@ -2134,11 +2428,10 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                         LatLng(loc.lat!, loc.lng!);
                     zoneSearchCtrl.text =
                         s.description ?? '';
-                    localMode =
-                        ZoneFilterMode.customLocation;
+                    localMode = ZoneFilterMode
+                        .customLocation;
                     modalSuggestions = [];
                   });
-                  // On mémorise le label côté page
                   setState(() {
                     _zoneCityLabel =
                         s.description ?? '';
@@ -2171,8 +2464,9 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                           await _getUserLocation();
                           if (myLoc != null) {
                             setS(() {
-                              localMode = ZoneFilterMode
-                                  .currentPosition;
+                              localMode =
+                                  ZoneFilterMode
+                                      .currentPosition;
                             });
                           }
                         } else {
@@ -2183,8 +2477,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                       },
                       borderRadius:
                       BorderRadius.circular(8),
-                      fillColor:
-                      const Color(0xFF6C63FF)
+                      fillColor: const Color(0xFF6C63FF)
                           .withOpacity(0.1),
                       selectedColor:
                       const Color(0xFF6C63FF),
@@ -2220,7 +2513,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                         children: [
                           TextField(
                             controller: zoneSearchCtrl,
-                            decoration: const InputDecoration(
+                            decoration:
+                            const InputDecoration(
                               labelText:
                               "Rechercher une ville",
                               prefixIcon:
@@ -2327,17 +2621,15 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                             }
                             Navigator.pop(context);
                             setState(() {
-                              _zoneFilterMode =
-                                  localMode;
-                              _distanceKm =
-                                  localKm;
-                              _zoneFilterCenter = localMode ==
+                              _zoneFilterMode = localMode;
+                              _distanceKm = localKm;
+                              _zoneFilterCenter =
+                              localMode ==
                                   ZoneFilterMode
                                       .customLocation
                                   ? localCenter
                                   : null;
-                              _zoneFilterEnabled =
-                              true;
+                              _zoneFilterEnabled = true;
                             });
                             _loadMissions();
                             if (_zoneFilterMode ==
@@ -2349,8 +2641,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                             } else if (_zoneFilterMode ==
                                 ZoneFilterMode
                                     .customLocation &&
-                                _zoneFilterCenter !=
-                                    null) {
+                                _zoneFilterCenter != null) {
                               _animateToZone(
                                   _zoneFilterCenter!,
                                   _distanceKm);
@@ -2378,7 +2669,7 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
     );
   }
 
-  // --- Modale ALL FILTERS (global pro) ---
+  // --- Modale ALL FILTERS ---
   void _showAllFiltersModal() {
     bool localWithPhoto = _withPhotoFilter;
     String localDate = _dateFilter;
@@ -2422,7 +2713,8 @@ class _ExplorePageState extends State<ExplorePage> with TickerProviderStateMixin
                         color: Color(0xFF6C63FF),
                       ),
                       title: const Text("Budget"),
-                      subtitle: Text(_buildBudgetSummary()),
+                      subtitle:
+                      Text(_buildBudgetSummary()),
                       trailing:
                       const Icon(Icons.chevron_right),
                       onTap: () {

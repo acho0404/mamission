@@ -3,7 +3,7 @@ import * as admin from "firebase-admin";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import Stripe from "stripe";
 
-// 🔐 MET ICI TA CLÉ SECRÈTE STRIPE TEST (sk_test_...)
+// 🔐 TA CLÉ SECRÈTE STRIPE
 const stripe = new Stripe("sk_test_51SOjsWFqamUyjlkCKlOAcXPCDhoUKmOZKrEYX14JSaZ9tHZ8ZUFsTQyNq25tWdnLNwCmEPiCJPnAxIwkn3Rdm8MR00T7BPjlzM", {
   apiVersion: "2024-06-20",
 });
@@ -13,7 +13,48 @@ admin.initializeApp();
 const db = admin.firestore();
 
 /* ---------------------------------------------------------------------------
- 💳 CRÉATION DE L'INTENTION DE PAIEMENT (Stripe)
+ 💳 1. CRÉATION DU SETUP INTENT (POUR AJOUTER UNE CARTE) - [NOUVEAU]
+--------------------------------------------------------------------------- */
+export const createSetupIntent = functions.https.onCall(
+  async (data: any, context: any) => {
+    // 1. Vérification auth
+    if (!context.auth) {
+      throw new functions.https.HttpsError(
+        "unauthenticated",
+        "Vous devez être connecté."
+      );
+    }
+
+    try {
+      // 2. Création (ou récupération) d'un Customer Stripe pour cet user
+      // Note: Idéalement, on stocke le customerId dans Firestore pour ne pas en recréer un à chaque fois.
+      // Ici on en crée un nouveau à chaque ajout pour simplifier le test.
+      const customer = await stripe.customers.create({
+        email: context.auth.token.email,
+        metadata: {
+          userId: context.auth.uid,
+        },
+      });
+
+      // 3. Création de l'intention de sauvegarde (SetupIntent)
+      const setupIntent = await stripe.setupIntents.create({
+        customer: customer.id,
+        payment_method_types: ["card"],
+      });
+
+      // 4. Retour du secret au front-end Flutter
+      return {
+        clientSecret: setupIntent.client_secret,
+      };
+    } catch (error: any) {
+      console.error("Erreur SetupIntent:", error);
+      throw new functions.https.HttpsError("internal", error.message);
+    }
+  }
+);
+
+/* ---------------------------------------------------------------------------
+ 💳 2. CRÉATION DE L'INTENTION DE PAIEMENT (Stripe)
 --------------------------------------------------------------------------- */
 export const createPaymentIntent = functions.https.onCall(
   async (data: any, context: any) => {
@@ -38,9 +79,11 @@ export const createPaymentIntent = functions.https.onCall(
       const paymentIntent = await stripe.paymentIntents.create({
         amount,
         currency,
-        automatic_payment_methods: { enabled: true },
+        // 🔒 UNIQUEMENT carte bleue
+        payment_method_types: ["card"],
         metadata: {
           userId: context.auth.uid,
+          feature: "mission_payment",
         },
       });
 
@@ -48,14 +91,15 @@ export const createPaymentIntent = functions.https.onCall(
         clientSecret: paymentIntent.client_secret,
       };
     } catch (error: any) {
-      console.error("Erreur Stripe:", error);
+      console.error("Erreur Stripe (createPaymentIntent):", error);
       throw new functions.https.HttpsError("internal", error.message);
     }
   }
 );
 
+
 /* ---------------------------------------------------------------------------
- 🔥 AUTO-CLOSE MISSION LORSQUE LES 2 AVIS SONT POSTÉS
+ 🔥 3. AUTO-CLOSE MISSION LORSQUE LES 2 AVIS SONT POSTÉS
 --------------------------------------------------------------------------- */
 export const autoCloseMission = onDocumentCreated(
   "reviews/{id}",
@@ -132,8 +176,120 @@ export const autoCloseMission = onDocumentCreated(
   }
 );
 
+
+/* ------------------------------------------------------------------
+   1. Crée un PaymentIntent pour 9,99 € (compte vérifié)
+------------------------------------------------------------------- */
+export const createVisibilitySubscriptionPaymentIntent =
+  functions.https.onCall(async (data, context) => {
+    const uid = context.auth?.uid;
+    if (!uid) {
+      throw new functions.https.HttpsError(
+        "unauthenticated",
+        "Utilisateur non authentifié."
+      );
+    }
+
+    const amount = 999; // 9,99 € en centimes
+    const currency = "eur";
+
+    try {
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount,
+        currency,
+        // 🔒 UNIQUEMENT CB
+        payment_method_types: ["card"],
+        setup_future_usage: "off_session",
+        description: "Compte vérifié MaMission - 1 mois",
+        metadata: {
+          firebaseUID: uid,
+          feature: "visibility_subscription",
+          plan: "standard",
+        },
+      });
+
+      await db
+        .collection("visibilitySubscriptions")
+        .doc(uid)
+        .set(
+          {
+            userId: uid,
+            plan: "standard",
+            paymentIntentId: paymentIntent.id,
+            status: "pending_payment",
+            amount,
+            currency,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+      return {
+        clientSecret: paymentIntent.client_secret,
+      };
+    } catch (error: any) {
+      console.error(
+        "Erreur Stripe (createVisibilitySubscriptionPaymentIntent):",
+        error
+      );
+      throw new functions.https.HttpsError(
+        "internal",
+        "Erreur Stripe lors de la création du paiement."
+      );
+    }
+  });
+
+
+/* ------------------------------------------------------------------
+   2. Marque l’abonnement comme actif après paiement OK
+------------------------------------------------------------------- */
+export const activateVisibilitySubscription = functions.https.onCall(
+  async (data, context) => {
+    const uid = context.auth?.uid;
+    if (!uid) {
+      throw new functions.https.HttpsError(
+        "unauthenticated",
+        "Utilisateur non authentifié."
+      );
+    }
+
+    const now = new Date();
+    const renewDate = new Date(now);
+    renewDate.setMonth(renewDate.getMonth() + 1);
+
+    const userRef = db.collection("users").doc(uid);
+
+    // champ utilisés sur la ProfilePage
+    await userRef.set(
+      {
+        subType: "standard",
+        subStatus: "active",
+        subRenewsAt: admin.firestore.Timestamp.fromDate(renewDate),
+      },
+      { merge: true }
+    );
+
+    await db
+      .collection("visibilitySubscriptions")
+      .doc(uid)
+      .set(
+        {
+          userId: uid,
+          plan: "standard",
+          status: "active",
+          currentPeriodStart: admin.firestore.Timestamp.fromDate(now),
+          currentPeriodEnd: admin.firestore.Timestamp.fromDate(renewDate),
+          provider: "stripe",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+    return { ok: true };
+  }
+);
 /* ---------------------------------------------------------------------------
- 🔥 NOTIF AUTOMATIQUE SUR NOUVEAU MESSAGE DE CHAT
+ 🔥 4. NOTIF AUTOMATIQUE SUR NOUVEAU MESSAGE DE CHAT
 --------------------------------------------------------------------------- */
 export const onNewChatMessage = onDocumentCreated(
   "chats/{chatId}/messages/{messageId}",
@@ -214,7 +370,7 @@ export const onNewChatMessage = onDocumentCreated(
 );
 
 /* ---------------------------------------------------------------------------
- 🔥 PUSH FCM SUR NOUVELLE NOTIF FIRESTORE
+ 🔥 5. PUSH FCM SUR NOUVELLE NOTIF FIRESTORE
 --------------------------------------------------------------------------- */
 export const sendPushOnNotificationCreate = onDocumentCreated(
   "notifications/{id}",
